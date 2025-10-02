@@ -244,6 +244,24 @@ exports.registerSchool = async (req, res) => {
     const aadharBackUrl = aadharBackFile.path;
     const schoolIdImageUrl = schoolIdImageFile.path;
 
+    // Check for existing email
+    const existingSchool = await SchoolRegistration.findOne({ email });
+    if (existingSchool) {
+      return res.status(409).json({
+        success: false,
+        message: 'Email already registered'
+      });
+    }
+
+    // Check for existing mobile
+    const existingMobile = await SchoolRegistration.findOne({ mobile });
+    if (existingMobile) {
+      return res.status(409).json({
+        success: false,
+        message: 'Mobile number already registered'
+      });
+    }
+
     const schoolUniqueId = await generateSchoolUniqueId();
 
     // Hash password
@@ -274,7 +292,7 @@ exports.registerSchool = async (req, res) => {
     });
   } catch (error) {
     console.error('Register school error:', error);
-    res.status(500).json({ success: false, message: 'Server error while registering school', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to register school. Please check your input and try again.', error: error.message });
   }
 };
 

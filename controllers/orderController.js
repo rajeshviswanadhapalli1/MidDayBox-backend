@@ -153,7 +153,7 @@ exports.createOrder = async (req, res) => {
     console.error('Create order error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while creating order',
+      message: 'Failed to create lunch box order. Please check your input data and try again.',
       error: error.message
     });
   }
@@ -197,7 +197,7 @@ exports.getParentOrders = async (req, res) => {
     console.error('Get parent orders error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching orders',
+      message: 'Failed to retrieve your orders. Please try again later.',
       error: error.message
     });
   }
@@ -232,7 +232,7 @@ exports.getOrderById = async (req, res) => {
     console.error('Get order by ID error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching order',
+      message: 'Failed to retrieve the order details. Please try again later.',
       error: error.message
     });
   }
@@ -324,7 +324,7 @@ exports.getAllOrders = async (req, res) => {
     console.error('Get all orders error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching orders',
+      message: 'Failed to retrieve orders. Please try again later.',
       error: error.message
     });
   }
@@ -358,7 +358,7 @@ exports.getOrderDetails = async (req, res) => {
     console.error('Get order details error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching order details',
+      message: 'Failed to retrieve order details. Please try again later.',
       error: error.message
     });
   }
@@ -416,7 +416,7 @@ exports.assignDeliveryBoy = async (req, res) => {
     console.error('Assign delivery boy error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while assigning delivery boy',
+      message: 'Failed to assign delivery boy to the order. Please try again later.',
       error: error.message
     });
   }
@@ -505,7 +505,7 @@ exports.updateDailyDelivery = async (req, res) => {
     console.error('Update daily delivery error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while updating daily delivery',
+      message: 'Failed to update daily delivery status. Please try again later.',
       error: error.message
     });
   }
@@ -561,7 +561,7 @@ exports.updateOrderStatus = async (req, res) => {
     console.error('Update order status error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while updating order status',
+      message: 'Failed to update order status. Please try again later.',
       error: error.message
     });
   }
@@ -608,7 +608,7 @@ exports.cancelOrder = async (req, res) => {
     console.error('Cancel order error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while cancelling order',
+      message: 'Failed to cancel the order. Please try again later.',
       error: error.message
     });
   }
@@ -661,7 +661,7 @@ exports.getTodayDeliveries = async (req, res) => {
     console.error('Get today deliveries error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching today deliveries',
+      message: 'Failed to retrieve today\'s deliveries. Please try again later.',
       error: error.message
     });
   }
@@ -752,7 +752,7 @@ console.log(orders,'orders');
     console.error('Get orders by school error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching orders by school',
+      message: 'Failed to retrieve orders for the school. Please try again later.',
       error: error.message
     });
   }

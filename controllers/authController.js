@@ -171,10 +171,10 @@ exports.registerParent = async (req, res) => {
 
   } catch (error) {
     console.error('Parent registration error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error during registration',
-      error: error.message 
+      message: 'Failed to register parent. Please check your input and try again.',
+      error: error.message
     });
   }
 };
@@ -336,6 +336,7 @@ exports.registerDeliveryBoy = async (req, res) => {
       adharNumber,
       adharFrontUrl: fileUrls.adharFront,
       adharBackUrl: fileUrls.adharBack,
+      approvalStatus:'approved',
       drivingLicenceFrontUrl: fileUrls.drivingLicenceFront,
       drivingLicenceBackUrl: fileUrls.drivingLicenceBack,
       schoolUniqueId: deliveryBoy.schoolUniqueId || null,
@@ -356,10 +357,10 @@ exports.registerDeliveryBoy = async (req, res) => {
 
   } catch (error) {
     console.error('Delivery boy registration error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Server error during registration',
-      error: error.message 
+      message: 'Failed to register delivery boy. Please check your input and try again.',
+      error: error.message
     });
   }
 };
