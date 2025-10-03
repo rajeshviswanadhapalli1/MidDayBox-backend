@@ -96,7 +96,8 @@ exports.adminLogin = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const { page = 1, limit = 10, userType } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
 
     let parents = [];
     let deliveryBoys = [];
@@ -104,22 +105,28 @@ exports.getAllUsers = async (req, res) => {
     let totalDeliveryBoys = 0;
 
     if (!userType || userType === 'parent') {
+      totalParents = await Parent.countDocuments();
       parents = await Parent.find()
         .select('name email mobile altMobile createdAt updatedAt')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit));
-      totalParents = await Parent.countDocuments();
+        .sort({ createdAt: -1 }) // latest first
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum);
     }
 
     if (!userType || userType === 'deliveryboy') {
+      totalDeliveryBoys = await DeliveryBoy.countDocuments();
       deliveryBoys = await DeliveryBoy.find()
         .select('name email mobile altMobile vehicleType vehicleNo drivingLicenceNumber adharNumber adharFrontUrl adharBackUrl drivingLicenceFrontUrl drivingLicenceBackUrl isActive approvalStatus createdAt updatedAt')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit));
-      totalDeliveryBoys = await DeliveryBoy.countDocuments();
+        .sort({ createdAt: -1 }) // latest first
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum);
     }
+
+    // build pagination count separately for each type
+    let totalRecords = 0;
+    if (userType === 'parent') totalRecords = totalParents;
+    else if (userType === 'deliveryboy') totalRecords = totalDeliveryBoys;
+    else totalRecords = totalParents + totalDeliveryBoys; // combined count
 
     res.json({
       success: true,
@@ -130,10 +137,10 @@ exports.getAllUsers = async (req, res) => {
         totalDeliveryBoys
       },
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(Math.max(totalParents, totalDeliveryBoys) / parseInt(limit)),
-        hasNextPage: skip + Math.max(parents.length, deliveryBoys.length) < Math.max(totalParents, totalDeliveryBoys),
-        hasPrevPage: parseInt(page) > 1
+        currentPage: pageNum,
+        totalPages: Math.ceil(totalRecords / limitNum),
+        hasNextPage: pageNum * limitNum < totalRecords,
+        hasPrevPage: pageNum > 1
       }
     });
 

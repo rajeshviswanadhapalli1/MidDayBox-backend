@@ -15,16 +15,21 @@ const deliveryBoySchema = new mongoose.Schema({
   drivingLicenceFrontUrl: { type: String, required: true },
   drivingLicenceBackUrl: { type: String, required: true },
   profilePicture: { type: String }, // Profile picture URL
-  isActive: { type: Boolean, default: false }, // Default to false, needs admin approval
+  isActive: { type: Boolean, default: true }, // Default to false, needs admin approval
+  // approvalStatus: { 
+  //   type: String, 
+  //   enum: ['pending', 'approved', 'rejected'], 
+  //   default: 'pending' 
+  // },
   approvalStatus: { 
     type: String, 
     enum: ['pending', 'approved', 'rejected'], 
-    default: 'pending' 
+    default: 'approved' 
   },
   approvalDate: { type: Date },
   approvedBy: { 
     type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Admin' 
+    ref: 'SchoolRegistration' 
   },
   rejectionReason: { type: String },
   // Status and location tracking

@@ -60,6 +60,36 @@ exports.changePassword = async (req, res) => {
     });
   }
 };
+const checkDuplicateAcrossAllUsers = async ({ mobile, altMobile, email }) => {
+  // Check mobile
+  if (mobile) {
+    const mobileExists =
+      (await Parent.findOne({ mobile })) ||
+      (await DeliveryBoy.findOne({ mobile })) ||
+      (await SchoolRegistration.findOne({ mobile }));
+    if (mobileExists) return 'Mobile number already registered';
+  }
+
+  // Check altMobile
+  if (altMobile !== '') {
+    const altMobileExists =
+      (await Parent.findOne({ altMobile })) ||
+      (await DeliveryBoy.findOne({ altMobile })) ||
+      (await SchoolRegistration.findOne({ altMobile }));
+    if (altMobileExists) return 'Alternative mobile number already registered';
+  }
+
+  // Check email
+  if (email) {
+    const emailExists =
+      (await Parent.findOne({ email })) ||
+      (await DeliveryBoy.findOne({ email })) ||
+      (await SchoolRegistration.findOne({ email }));
+    if (emailExists) return 'Email already registered';
+  }
+
+  return null; // No duplicates
+};
 // Register Parent
 exports.registerParent = async (req, res) => {
   try {
@@ -98,26 +128,32 @@ exports.registerParent = async (req, res) => {
     }
 
     // Check for existing mobile numbers
-    const existingChecks = [
-      { field: 'mobile', value: mobile, message: 'Mobile number already registered' },
-      { field: 'email', value: email, message: 'Email already registered' }
-    ];
+    // const existingChecks = [
+    //   { field: 'mobile', value: mobile, message: 'Mobile number already registered' },
+    //   { field: 'email', value: email, message: 'Email already registered' }
+    // ];
 
-    // Add altMobile check only if provided
-    if (altMobile) {
-      existingChecks.push({ field: 'altMobile', value: altMobile, message: 'Alternative mobile number already registered' });
-    }
+    // // Add altMobile check only if provided
+    // if (altMobile) {
+    //   existingChecks.push({ field: 'altMobile', value: altMobile, message: 'Alternative mobile number already registered' });
+    // }
 
-    for (const check of existingChecks) {
-      const existing = await Parent.findOne({ [check.field]: check.value });
-      if (existing) {
-        return res.status(409).json({ 
-          success: false,
-          message: check.message 
-        });
-      }
-    }
-
+    // for (const check of existingChecks) {
+    //   const existing = await Parent.findOne({ [check.field]: check.value });
+    //   if (existing) {
+    //     return res.status(409).json({ 
+    //       success: false,
+    //       message: check.message 
+    //     });
+    //   }
+    // }
+const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile, email });
+if (duplicateMessage) {
+  return res.status(409).json({
+    success: false,
+    message: duplicateMessage
+  });
+}
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -257,11 +293,17 @@ exports.registerDeliveryBoy = async (req, res) => {
         receivedFiles: Object.keys(fileMap)
       });
     }
-
+const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile:'', email });
+if (duplicateMessage) {
+  return res.status(409).json({
+    success: false,
+    message: duplicateMessage
+  });
+}
     // Check for existing records (skip altMobile if not provided)
     const existingChecks = [
-      { field: 'mobile', value: mobile, message: 'Mobile number already registered' },
-      { field: 'email', value: email, message: 'Email already registered' },
+      // { field: 'mobile', value: mobile, message: 'Mobile number already registered' },
+      // { field: 'email', value: email, message: 'Email already registered' },
       { field: 'drivingLicenceNumber', value: drivingLicenceNumber, message: 'Driving licence number already registered' },
       { field: 'adharNumber', value: adharNumber, message: 'Adhar number already registered' }
     ];
@@ -270,10 +312,15 @@ exports.registerDeliveryBoy = async (req, res) => {
     if (altMobile) {
       existingChecks.push({ field: 'altMobile', value: altMobile, message: 'Alternative mobile number already registered' });
     }
+console.log(existingChecks,'existingChecks');
 
     for (const check of existingChecks) {
       const existing = await DeliveryBoy.findOne({ [check.field]: check.value });
+      console.log(existing,'existing');
+      
       if (existing) {
+        console.log(check.message,'check.message');
+        
         return res.status(409).json({ message: check.message });
       }
     }
@@ -286,6 +333,7 @@ exports.registerDeliveryBoy = async (req, res) => {
       name,
       email,
       mobile,
+      altMobile,
       password: hashedPassword,
       vehicleType,
       vehicleNo,
@@ -330,13 +378,13 @@ exports.registerDeliveryBoy = async (req, res) => {
       name,
       email,
       mobile,
+      altMobile: altMobile || null,
       vehicleType,
       vehicleNo,
       drivingLicenceNumber,
       adharNumber,
       adharFrontUrl: fileUrls.adharFront,
       adharBackUrl: fileUrls.adharBack,
-      approvalStatus:'approved',
       drivingLicenceFrontUrl: fileUrls.drivingLicenceFront,
       drivingLicenceBackUrl: fileUrls.drivingLicenceBack,
       schoolUniqueId: deliveryBoy.schoolUniqueId || null,

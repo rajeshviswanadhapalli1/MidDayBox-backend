@@ -19,7 +19,7 @@ const schoolRegistrationSchema = new mongoose.Schema({
   aadharBackUrl: { type: String, required: true },
   schoolName: { type: String, required: true },
   recogniseId: { type: String, required: true,unique: true },
-  branchNumber: { type: String, required: false,unique: false },
+  branchNumber: { type: String, required: false, unique: true, sparse: true },
   address: { type: addressSchema, required: true },
   schoolIdImageUrl: { type: String, required: true },
   profilePicture: { type: String },

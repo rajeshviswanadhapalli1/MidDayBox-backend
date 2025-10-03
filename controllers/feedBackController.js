@@ -6,11 +6,14 @@ const USER_TYPE_MAP = {
 };
 exports.createFeedback = async (req, res) => {
   try {
-    const { message, userType } = req.body;
+    const { message, userType,subject } = req.body;
     const userId = req.user.id; // assuming auth middleware sets req.user
     console.log(message, userId);
     if (!message) {
       return res.status(400).json({ error: "Message is required" });
+    }
+     if (!subject) {
+      return res.status(400).json({ error: "Subject is required" });
     }
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
@@ -23,6 +26,7 @@ const normalizedType = USER_TYPE_MAP[userType.toLowerCase()];
     const feedback = new Feedback({
         userId,
         userType:normalizedType,
+        subject,
       message,
     });
     console.log("Feedback created:", feedback);

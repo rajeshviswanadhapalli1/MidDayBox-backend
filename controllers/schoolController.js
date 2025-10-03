@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const ParentAddress = require('../models/ParentAddress');
 const axios = require('axios');
 const SchoolRegistration = require('../models/SchoolRegistration');
+const Parent = require('../models/Parent');
+// const DeliveryBoy = require('../models/DeliveryBoy');
 const cloudinary = require('cloudinary').v2;
 const bcrypt = require('bcryptjs');
 const DeliveryBoy = require('../models/DeliveryBoy');
@@ -245,16 +247,31 @@ exports.registerSchool = async (req, res) => {
     const schoolIdImageUrl = schoolIdImageFile.path;
 
     // Check for existing email
-    const existingSchool = await SchoolRegistration.findOne({ email });
-    if (existingSchool) {
+    // const existingSchool = await SchoolRegistration.findOne({ email });
+    // if (existingSchool) {
+    //   return res.status(409).json({
+    //     success: false,
+    //     message: 'Email already registered'
+    //   });
+    // }
+// if (mobile) {
+    const existingSchool =
+      (await Parent.findOne({ email })) ||
+      (await DeliveryBoy.findOne({ email })) ||
+      (await SchoolRegistration.findOne({ email }));
+       if (existingSchool) {
       return res.status(409).json({
         success: false,
         message: 'Email already registered'
       });
     }
-
+    // if (mobileExists) return 'Mobile number already registered';
+  // }
     // Check for existing mobile
-    const existingMobile = await SchoolRegistration.findOne({ mobile });
+    const existingMobile =  (await Parent.findOne({ mobile })) ||
+      (await DeliveryBoy.findOne({ mobile })) ||
+      (await SchoolRegistration.findOne({ mobile }));
+      
     if (existingMobile) {
       return res.status(409).json({
         success: false,

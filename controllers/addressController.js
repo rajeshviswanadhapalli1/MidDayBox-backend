@@ -55,33 +55,34 @@ exports.addParentAddress = async (req, res) => {
     const parentId = req.user.id; // From JWT token
     console.log(parentId,"parentId");
     
-    const { 
-      parentName,
-      studentName,
-      studentClass,
-      rollNumber,
-      houseNo, 
-      apartmentName, 
-      areaName, 
-      landMark, 
-      cityName, 
-      pincode, 
-      isDefault 
-    } = req.body;
+  const { 
+  parentName,
+  studentName,
+  studentClass,
+  rollNumber,
+  houseNo, 
+  apartmentName, 
+  areaName, 
+  landMark, 
+  cityName, 
+  pincode, 
+  isDefault,
+  noOfBoxes 
+} = req.body;
 
     // Validate required fields
-    const requiredFields = { parentName, studentName, houseNo, areaName, landMark, cityName, pincode };
-    const missingFields = Object.entries(requiredFields)
-      .filter(([key, value]) => !value)
-      .map(([key]) => key);
+    const requiredFields = { parentName, studentName, houseNo, areaName, landMark, cityName, pincode, noOfBoxes };
+const missingFields = Object.entries(requiredFields)
+  .filter(([key, value]) => value === undefined || value === null || value === '')
+  .map(([key]) => key);
 
-    if (missingFields.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields',
-        missingFields
-      });
-    }
+if (missingFields.length > 0) {
+  return res.status(400).json({
+    success: false,
+    message: 'Missing required fields',
+    missingFields
+  });
+}
 
     // Validate pincode format
     if (pincode.length !== 6 || !/^\d+$/.test(pincode)) {
@@ -113,19 +114,20 @@ exports.addParentAddress = async (req, res) => {
 
     // Create address
     const addressData = {
-      parentId,
-      parentName,
-      studentName,
-      studentClass,
-      rollNumber,
-      houseNo,
-      apartmentName,
-      areaName,
-      landMark,
-      cityName,
-      pincode,
-      isDefault: isDefault || false
-    };
+  parentId,
+  parentName,
+  studentName,
+  studentClass,
+  rollNumber,
+  houseNo,
+  apartmentName,
+  areaName,
+  landMark,
+  cityName,
+  pincode,
+  isDefault: isDefault || false,
+  noOfBoxes: Number(noOfBoxes) || 0, 
+};
 
     // Add coordinates if available
     if (coordinates) {
@@ -181,16 +183,19 @@ exports.updateParentAddress = async (req, res) => {
     const parentId = req.user.id;
     const addressId = req.params.addressId;
     const { 
-      parentName,
-      studentName,
-      houseNo, 
-      apartmentName, 
-      areaName, 
-      landMark, 
-      cityName, 
-      pincode, 
-      isDefault 
-    } = req.body;
+  parentName,
+  studentName,
+  studentClass,
+  rollNumber,
+  houseNo, 
+  apartmentName, 
+  areaName, 
+  landMark, 
+  cityName, 
+  pincode, 
+  isDefault,
+  noOfBoxes // ✅ new field
+} = req.body;
 
     // Check if address exists and belongs to parent
     const address = await ParentAddress.findOne({ _id: addressId, parentId });
@@ -218,43 +223,39 @@ exports.updateParentAddress = async (req, res) => {
     }
 
     // Update address
-    const updateData = {};
-    if (parentName) updateData.parentName = parentName;
-    if (studentName) updateData.studentName = studentName;
-    if (studentClass !== undefined) updateData.studentClass = studentClass;
-    if (rollNumber !== undefined) updateData.rollNumber = rollNumber;
-    if (houseNo) updateData.houseNo = houseNo;
-    if (apartmentName) updateData.apartmentName = apartmentName;
-    if (areaName) updateData.areaName = areaName;
-    if (landMark) updateData.landMark = landMark;
-    if (cityName) updateData.cityName = cityName;
-    if (pincode) updateData.pincode = pincode;
-    if (typeof isDefault === 'boolean') updateData.isDefault = isDefault;
+   const updateData = {};
+if (parentName) updateData.parentName = parentName;
+if (studentName) updateData.studentName = studentName;
+if (studentClass !== undefined) updateData.studentClass = studentClass;
+if (rollNumber !== undefined) updateData.rollNumber = rollNumber;
+if (houseNo) updateData.houseNo = houseNo;
+if (apartmentName) updateData.apartmentName = apartmentName;
+if (areaName) updateData.areaName = areaName;
+if (landMark) updateData.landMark = landMark;
+if (cityName) updateData.cityName = cityName;
+if (pincode) updateData.pincode = pincode;
+if (typeof isDefault === 'boolean') updateData.isDefault = isDefault;
+if (noOfBoxes !== undefined) updateData.noOfBoxes = Number(noOfBoxes);
 
-    // If any address fields are being updated, re-geocode
-    if (areaName || pincode || cityName) {
-      const coordsArea = areaName || address.areaName;
-      const coordsPincode = pincode || address.pincode;
-      const coordsCity = cityName || address.cityName;
+// Re-geocode if areaName, cityName, or pincode updated
+if (areaName || cityName || pincode) {
+  const coordsArea = areaName || address.areaName;
+  const coordsPincode = pincode || address.pincode;
+  const coordsCity = cityName || address.cityName;
 
-      const coordinates = await getCoordinates(coordsArea, coordsPincode, coordsCity);
-      if (coordinates) {
-        updateData.latitude = coordinates.lat;
-        updateData.longitude = coordinates.lon;
-      }
-    }
+  const coordinates = await getCoordinates(coordsArea, coordsPincode, coordsCity);
+  if (coordinates) {
+    updateData.latitude = coordinates.lat;
+    updateData.longitude = coordinates.lon;
+  }
+}
 
-    const updatedAddress = await ParentAddress.findByIdAndUpdate(
-      addressId,
-      updateData,
-      { new: true }
-    );
-
-    res.json({
-      success: true,
-      message: 'Address updated successfully',
-      address: updatedAddress
-    });
+const updatedAddress = await ParentAddress.findByIdAndUpdate(addressId, updateData, { new: true });
+res.json({
+  success: true,
+  message: 'Address updated successfully',
+  address: updatedAddress
+});
 
   } catch (error) {
     console.error('Update address error:', error);

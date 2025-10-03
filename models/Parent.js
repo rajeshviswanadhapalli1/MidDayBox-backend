@@ -7,6 +7,6 @@ const parentSchema = new mongoose.Schema({
   altMobile: { type: String, unique: true, sparse: true, minlength: 10, maxlength: 10 }, // Made optional
   password: { type: String, required: true },
   profilePicture: { type: String }, // Cloudinary URL
-});
+},{ timestamps: true });
 
 module.exports = mongoose.model('Parent', parentSchema); 
