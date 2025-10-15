@@ -97,7 +97,7 @@ const orderSchema = new mongoose.Schema({
   // Order Details
   orderType: {
     type: String,
-    enum: ['15_days', '30_days'],
+    enum: ['15_days', '30_days','today'],
     required: true
   },
   startDate: {

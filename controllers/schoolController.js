@@ -56,6 +56,8 @@ const getCoordinates = async (areaName, pincode, cityName) => {
 
 // For parents: Get approved school registrations with optional search by schoolUniqueId
 exports.getApprovedSchoolRegistrations = async (req, res) => {
+  console.log('req.query:', req.query);
+  
   try {
     const { schoolUniqueId, page = 1, limit = 10 } = req.query;
 
@@ -63,7 +65,8 @@ exports.getApprovedSchoolRegistrations = async (req, res) => {
     if (schoolUniqueId) {
       filter.schoolUniqueId = schoolUniqueId;
     }
-
+    console.log(filter,'filter');
+    
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const registrations = await SchoolRegistration.find(filter)

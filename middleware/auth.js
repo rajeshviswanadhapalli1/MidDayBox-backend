@@ -92,7 +92,9 @@ exports.requireAdmin = (req, res, next) => {
 
 // Middleware to check if user is school
 exports.requireSchool = (req, res, next) => {
+  console.log(req.user);
   if (req.user.role !== 'school') {
+    
     return res.status(403).json({
       success: false,
       message: 'Access denied. School role required.'

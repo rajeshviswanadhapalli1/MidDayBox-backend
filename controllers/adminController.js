@@ -711,7 +711,7 @@ exports.getPricing = async (req, res) => {
 // Update pricing
 exports.updatePricing = async (req, res) => {
   try {
-    const { tiers, boxPrice, gstPercent } = req.body;
+    const { tiers, boxPrice, gstPercent, serviceChargePercent } = req.body;
 
     // Basic validation
     if (!Array.isArray(tiers) || tiers.length === 0) {
@@ -738,12 +738,16 @@ exports.updatePricing = async (req, res) => {
     if (gstPercent === undefined || gstPercent === null || isNaN(Number(gstPercent)) || Number(gstPercent) < 0 || Number(gstPercent) > 100) {
       return res.status(400).json({ success: false, message: 'gstPercent must be a number between 0 and 100' });
     }
+    if (serviceChargePercent === undefined || serviceChargePercent === null || isNaN(Number(serviceChargePercent)) || Number(serviceChargePercent) < 0 || Number(serviceChargePercent) > 100) {
+      return res.status(400).json({ success: false, message: 'serviceChargePercent must be a number between 0 and 100' });
+    }
 
     // Create new pricing version (keeps history)
     const pricing = new Pricing({
       tiers: formattedTiers,
       boxPrice: Number(boxPrice),
       gstPercent: Number(gstPercent),
+      serviceChargePercent: Number(serviceChargePercent),
       updatedBy: req.user?.id || null
     });
 

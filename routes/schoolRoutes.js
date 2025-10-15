@@ -65,11 +65,13 @@ router.post(
 
 // All routes require authentication after registration endpoint
 router.use(authenticateUser);
+router.get('/registrations/approved', schoolController.getApprovedSchoolRegistrations);
+router.get('/search', schoolController.searchSchools);
+router.post('/distance', schoolController.getDistanceToSchool);
+router.use(requireSchool);
 
 // Public routes (for searching schools)
-router.get('/search', schoolController.searchSchools);
-router.get('/registrations/approved', schoolController.getApprovedSchoolRegistrations);
-router.post('/distance', schoolController.getDistanceToSchool);
+
 
 // Authenticated school registration profile (SchoolRegistration)
 router.get('/me', requireSchool, schoolController.getMySchoolRegistration);
@@ -91,7 +93,7 @@ router.patch('/profile', profileUpload.single('profilePicture'), (err, req, res,
 }, requireSchool, schoolController.updateSchoolRegistrationProfile);
 
 // Delivery boys by school (requires auth; school can omit schoolUniqueId to use their own)
-router.get('/delivery-boys/by-school', authenticateUser, schoolController.getDeliveryBoysBySchool);
+router.get('/delivery-boys/by-school', schoolController.getDeliveryBoysBySchool);
 
 // Get school by ID (must be after specific routes like /me and /delivery-boys/by-school)
 // router.get('/:schoolId', schoolController.getSchoolById);

@@ -6,6 +6,45 @@ const School = require('../models/School');
 const SchoolRegistration = require('../models/SchoolRegistration');
 const DeliveryBoy = require('../models/DeliveryBoy');
 
+const toObjectId = value => {
+  if (!value) return null;
+  if (value instanceof mongoose.Types.ObjectId) return value;
+  if (!mongoose.Types.ObjectId.isValid(value)) return null;
+  return new mongoose.Types.ObjectId(value);
+};
+
+const resolveSchoolIdentifiers = async (req, params = {}) => {
+  const { schoolUniqueId, schoolRegistrationId, registrationId } = params;
+  let resolvedUniqueId = schoolUniqueId;
+  let resolvedRegistrationId = schoolRegistrationId || registrationId;
+  if (!resolvedUniqueId && !resolvedRegistrationId && req.user?.role === 'school') {
+    const reg = await SchoolRegistration.findById(req.user.id).select('schoolUniqueId');
+    if (reg) {
+      resolvedUniqueId = reg.schoolUniqueId;
+      resolvedRegistrationId = reg._id?.toString();
+    }
+  }
+  return { resolvedUniqueId, resolvedRegistrationId };
+};
+
+const getAssignmentSummary = async filter => {
+  const baseFilter = { ...filter };
+  const assignedFilter = { ...baseFilter, deliveryBoyId: { $ne: null } };
+  const unAssignedFilter = {
+    ...baseFilter,
+    $or: [
+      { deliveryBoyId: null },
+      { deliveryBoyId: { $exists: false } }
+    ]
+  };
+  const [assignedOrdersCount, unAssignedOrdersCount, totalOrders] = await Promise.all([
+    Order.countDocuments(assignedFilter),
+    Order.countDocuments(unAssignedFilter),
+    Order.countDocuments(baseFilter)
+  ]);
+  return { assignedOrdersCount, unAssignedOrdersCount, totalOrders };
+};
+
 // Create new lunch box order
 exports.createOrder = async (req, res) => {
   try {
@@ -53,7 +92,7 @@ exports.createOrder = async (req, res) => {
     }
 
     // Validate order type
-    if (!['15_days', '30_days'].includes(orderType)) {
+    if (!['15_days', '30_days', 'today'].includes(orderType)) {
       return res.status(400).json({
         success: false,
         message: 'Order type must be 15_days or 30_days'
@@ -143,10 +182,17 @@ exports.createOrder = async (req, res) => {
     });
     await newOrder.save();
 
+    const { assignedOrdersCount, unAssignedOrdersCount } = await getAssignmentSummary({
+      schoolRegistrationId: newOrder.schoolRegistrationId,
+      schoolUniqueId: newOrder.schoolUniqueId
+    });
+
     res.status(201).json({
       success: true,
       message: 'Lunch box order created successfully',
-      order: newOrder
+      order: newOrder,
+      assignedOrdersCount,
+      unAssignedOrdersCount
     });
 
   } catch (error) {
@@ -406,10 +452,31 @@ exports.assignDeliveryBoy = async (req, res) => {
 
     await order.save();
 
+    const schoolFilter = {};
+    if (order.schoolRegistrationId) {
+      schoolFilter.schoolRegistrationId = order.schoolRegistrationId;
+    }
+    if (order.schoolUniqueId) {
+      schoolFilter.schoolUniqueId = order.schoolUniqueId;
+    }
+
+    const [assignedOrdersCount, unAssignedOrdersCount] = await Promise.all([
+      Order.countDocuments({ ...schoolFilter, deliveryBoyId: { $ne: null } }),
+      Order.countDocuments({
+        ...schoolFilter,
+        $or: [
+          { deliveryBoyId: null },
+          { deliveryBoyId: { $exists: false } }
+        ]
+      })
+    ]);
+
     res.json({
       success: true,
       message: 'Delivery boy assigned successfully',
-      order
+      order,
+      assignedOrdersCount,
+      unAssignedOrdersCount
     });
 
   } catch (error) {
@@ -671,25 +738,14 @@ exports.getTodayDeliveries = async (req, res) => {
 exports.getOrdersBySchool = async (req, res) => {
   try {
     const { schoolUniqueId, schoolRegistrationId, registrationId, page = 1, limit = 10, status, assigned } = req.query;
+console.log(schoolUniqueId,registrationId);
 
-    // Build base filter
-    const filter = {};
-console.log(schoolUniqueId,schoolRegistrationId);
+    const { resolvedUniqueId, resolvedRegistrationId } = await resolveSchoolIdentifiers(req, {
+      schoolUniqueId,
+      schoolRegistrationId,
+      registrationId
+    });
 
-    // Resolve identifiers in priority: explicit query -> inferred from authenticated school
-    let resolvedUniqueId = schoolUniqueId;
-    let resolvedRegistrationId = schoolRegistrationId || registrationId;
-
-    // If no identifiers provided and caller is an authenticated school, infer from token
-    if (!resolvedUniqueId && !resolvedRegistrationId && req.user?.role === 'school') {
-      const reg = await SchoolRegistration.findById(req.user.id).select('schoolUniqueId');
-      if (reg) {
-        resolvedUniqueId = reg.schoolUniqueId;
-        resolvedRegistrationId = reg._id?.toString();
-      }
-    }
-
-    // Validate presence
     if (!resolvedUniqueId && !resolvedRegistrationId) {
       return res.status(400).json({
         success: false,
@@ -697,24 +753,25 @@ console.log(schoolUniqueId,schoolRegistrationId);
       });
     }
 
-    // Apply identifiers
-    if (resolvedUniqueId) filter.schoolUniqueId = resolvedUniqueId;
+    const baseFilter = {};
+    if (resolvedUniqueId) baseFilter.schoolUniqueId = resolvedUniqueId;
     if (resolvedRegistrationId) {
-      // Validate ObjectId shape if provided
-      if (!mongoose.Types.ObjectId.isValid(resolvedRegistrationId)) {
+      const registrationObjectId = toObjectId(resolvedRegistrationId);
+      if (!registrationObjectId) {
         return res.status(400).json({ success: false, message: 'Invalid schoolRegistrationId' });
       }
-      filter.schoolRegistrationId = new mongoose.Types.ObjectId(resolvedRegistrationId);
+      baseFilter.schoolRegistrationId = registrationObjectId;
     }
-    if (status) filter.status = status;
+    if (status) baseFilter.status = status;
 
-    // assigned filter: true => only orders with deliveryBoyId; false => only orders without
+    const queryFilter = { ...baseFilter };
+
     if (typeof assigned !== 'undefined') {
       const assignedBool = String(assigned).toLowerCase() === 'true';
       if (assignedBool) {
-        filter.deliveryBoyId = { $ne: null };
+        queryFilter.deliveryBoyId = { $ne: null };
       } else {
-        filter.$or = [
+        queryFilter.$or = [
           { deliveryBoyId: null },
           { deliveryBoyId: { $exists: false } }
         ];
@@ -723,22 +780,26 @@ console.log(schoolUniqueId,schoolRegistrationId);
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const orders = await Order.find(filter)
-      .populate('parentId', 'name email mobile altMobile')
-      .populate('parentAddressId')
-      .populate('schoolId')
-      .populate('schoolRegistrationId', 'schoolName schoolUniqueId contactName mobile email address')
-      .populate('deliveryBoyId', 'name mobile vehicleType vehicleNo')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-console.log(orders,'orders');
-
-    const total = await Order.countDocuments(filter);
+    const [orders, total, summary] = await Promise.all([
+      Order.find(queryFilter)
+        .populate('parentId', 'name email mobile altMobile')
+        .populate('parentAddressId')
+        .populate('schoolId')
+        .populate('schoolRegistrationId', 'schoolName schoolUniqueId contactName mobile email address')
+        .populate('deliveryBoyId', 'name mobile vehicleType vehicleNo')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      Order.countDocuments(queryFilter),
+      getAssignmentSummary(baseFilter)
+    ]);
+// console.log(orders,'orders');
 
     res.json({
       success: true,
       orders,
+      assignedOrdersCount: summary.assignedOrdersCount,
+      unAssignedOrdersCount: summary.unAssignedOrdersCount,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / parseInt(limit)),
@@ -753,6 +814,53 @@ console.log(orders,'orders');
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve orders for the school. Please try again later.',
+      error: error.message
+    });
+  }
+};
+
+exports.getSchoolOrderCounts = async (req, res) => {
+  try {
+    const { schoolUniqueId, schoolRegistrationId, registrationId, status } = req.query;
+
+    const { resolvedUniqueId, resolvedRegistrationId } = await resolveSchoolIdentifiers(req, {
+      schoolUniqueId,
+      schoolRegistrationId,
+      registrationId
+    });
+
+    if (!resolvedUniqueId && !resolvedRegistrationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Either schoolUniqueId or schoolRegistrationId is required'
+      });
+    }
+
+    const baseFilter = {};
+    if (resolvedUniqueId) baseFilter.schoolUniqueId = resolvedUniqueId;
+    if (resolvedRegistrationId) {
+      const registrationObjectId = toObjectId(resolvedRegistrationId);
+      if (!registrationObjectId) {
+        return res.status(400).json({ success: false, message: 'Invalid schoolRegistrationId' });
+      }
+      baseFilter.schoolRegistrationId = registrationObjectId;
+    }
+    if (status) baseFilter.status = status;
+
+    const summary = await getAssignmentSummary(baseFilter);
+
+    res.json({
+      success: true,
+      assignedOrdersCount: summary.assignedOrdersCount,
+      unAssignedOrdersCount: summary.unAssignedOrdersCount,
+      totalOrders: summary.totalOrders
+    });
+
+  } catch (error) {
+    console.error('Get school order counts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve order counts. Please try again later.',
       error: error.message
     });
   }

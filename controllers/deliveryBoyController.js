@@ -582,7 +582,7 @@ exports.getCurrentDateDeliveries = async (req, res) => {
       .populate('schoolRegistrationId')
       .sort({ createdAt: -1 });
 console.log(orders,'orders');
-
+console.log(orders,'orders count');
     // Filter orders that have deliveries for the target date
     const currentDateDeliveries = [];
 

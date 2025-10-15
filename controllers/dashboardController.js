@@ -1,5 +1,6 @@
 const Order = require('../models/Order');
 const ParentAddress = require('../models/ParentAddress');
+const School = require('../models/School');
 
 // Get parent dashboard data
 exports.getParentDashboard = async (req, res) => {
@@ -20,7 +21,7 @@ exports.getParentDashboard = async (req, res) => {
     const orders = await Order.find({ parentId })
       .populate('parentAddressId', 'parentName studentName')
       .populate('schoolId', 'schoolName')
-      .populate('schoolRegistrationId','schoolName')
+      .populate('schoolRegistrationId','schoolName mobile',)
       .populate('deliveryBoyId', 'name mobile')
       .sort({ createdAt: -1 });
 
@@ -34,7 +35,10 @@ exports.getParentDashboard = async (req, res) => {
     const recentOrders = orders.slice(0, 5).map(order => ({
       _id: order._id,
       orderNumber: order.orderNumber,
-      schoolName: order.schoolId?.schoolName || 'N/A',
+      schoolName: order.schoolRegistrationId?.schoolName || 'N/A',
+      schoolMobile: order.schoolRegistrationId.mobile || 'N/A',
+      deliveryBoyName: order.deliveryBoyId.name || 'N/A',
+      deliveryBoyMobile: order.deliveryBoyId.mobile || 'N/A',
       status: order.status,
       totalAmount: order.totalAmount,
       startDate: order.startDate,
