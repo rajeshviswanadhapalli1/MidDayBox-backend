@@ -14,7 +14,6 @@ const getCoordinates = async (areaName, pincode, cityName) => {
     ];
 
     for (const query of queries) {
-      console.log('Trying geocoding query:', query);
 
       const response = await axios.get('https://nominatim.openstreetmap.org/search', {
         params: {
@@ -30,7 +29,7 @@ const getCoordinates = async (areaName, pincode, cityName) => {
 
       if (response.data && response.data.length > 0) {
         const result = response.data[0];
-        console.log('Geocoding successful for query:', query, 'Result:', result);
+       
         return {
           lat: parseFloat(result.lat),
           lon: parseFloat(result.lon)
@@ -38,7 +37,6 @@ const getCoordinates = async (areaName, pincode, cityName) => {
       }
     }
 
-    console.log('No coordinates found for any query format');
     return null;
   } catch (error) {
     console.error('Geocoding error:', error);
@@ -48,13 +46,10 @@ const getCoordinates = async (areaName, pincode, cityName) => {
 
 // Add parent address
 exports.addParentAddress = async (req, res) => {
-  console.log(req.user,"req.user");
-  console.log(req.body,"req.body");
-  
+ 
   try {
     const parentId = req.user.id; // From JWT token
-    console.log(parentId,"parentId");
-    
+   
   const { 
   parentName,
   studentName,

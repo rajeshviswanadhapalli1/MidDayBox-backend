@@ -132,7 +132,14 @@ exports.createOrder = async (req, res) => {
     // Calculate end date based on order type
     const start = new Date(startDate);
     const endDate = new Date(start);
-    endDate.setDate(start.getDate() + (orderType === '15_days' ? 15 : 30));
+    // if(orderType === '15_days' || orderType === '30_days'){
+      if(orderType === 'today'){
+        endDate.setDate(endDate.getDate());
+      }else{
+        endDate.setDate(start.getDate() + (orderType === '15_days' ? 15 : 30));
+      }
+    // }
+    // endDate.setDate(start.getDate() + (orderType === '15_days' ? 15 : orderType === 'today'? 1 : 30));
 
     // Calculate distance
     const order = new Order();

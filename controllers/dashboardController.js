@@ -37,8 +37,8 @@ exports.getParentDashboard = async (req, res) => {
       orderNumber: order.orderNumber,
       schoolName: order.schoolRegistrationId?.schoolName || 'N/A',
       schoolMobile: order.schoolRegistrationId.mobile || 'N/A',
-      deliveryBoyName: order.deliveryBoyId.name || 'N/A',
-      deliveryBoyMobile: order.deliveryBoyId.mobile || 'N/A',
+      deliveryBoyName: order.deliveryBoyId?.name || 'N/A',
+      deliveryBoyMobile: order.deliveryBoyId?.mobile || 'N/A',
       status: order.status,
       totalAmount: order.totalAmount,
       startDate: order.startDate,
@@ -68,7 +68,7 @@ exports.getParentDashboard = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Get parent dashboard error:', error);
+    console.error('Get parent dashboard error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Server error while fetching dashboard data',
@@ -91,7 +91,6 @@ const calculateMonthlyStats = async (parentId, year) => {
       createdAt: { $gte: startOfMonth, $lte: endOfMonth }
     });
 
-    // Count total deliveries for this month
     let totalDeliveries = 0;
     let completedDeliveries = 0;
     let pendingDeliveries = 0;

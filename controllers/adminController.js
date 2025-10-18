@@ -26,7 +26,7 @@ const initializeAdmin = async () => {
         role: 'admin'
       });
       await admin.save();
-      console.log('Admin account created successfully');
+    
     }
   } catch (error) {
     console.error('Error initializing admin:', error);

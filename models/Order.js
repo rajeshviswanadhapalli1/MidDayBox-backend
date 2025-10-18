@@ -239,10 +239,25 @@ orderSchema.methods.generateDailyDeliveries = function() {
   const today = new Date();
   today.setHours(0,0,0,0); // normalize time
 
-  let currentDate;
-
   const startDate = new Date(this.startDate);
+  startDate.setHours(0,0,0,0);
   const endDate = new Date(this.endDate);
+  endDate.setHours(0,0,0,0);
+
+  // Handle single-day (today) orders separately so that the delivery is created for the same day
+  if (this.orderType === 'today') {
+    if (startDate.getDay() !== 0) { // still skip Sundays
+      deliveries.push({
+        date: new Date(startDate),
+        status: 'pending'
+      });
+    }
+
+    this.dailyDeliveries = deliveries;
+    return deliveries;
+  }
+
+  let currentDate;
 
   // If startDate is in the current month, start from tomorrow
   if (startDate.getMonth() === today.getMonth() && startDate.getFullYear() === today.getFullYear()) {

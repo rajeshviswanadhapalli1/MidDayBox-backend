@@ -159,7 +159,7 @@ exports.updateDeliveryBoyProfile = async (req, res) => {
           
           // Delete from Cloudinary
           await cloudinary.uploader.destroy(oldPublicId);
-          console.log('Old profile picture deleted from Cloudinary');
+        
         } catch (error) {
           console.error('Error deleting old profile picture:', error);
           // Continue with the update even if deletion fails
@@ -217,9 +217,9 @@ exports.updateDeliveryBoyProfile = async (req, res) => {
         if (profilePictureUrl) user.profilePicture = profilePictureUrl;
         
         await user.save();
-        console.log('User record updated successfully');
+       
       } else {
-        console.log('No corresponding User record found for delivery boy');
+       
       }
     } catch (userError) {
       console.error('Error updating User record:', userError);
@@ -531,7 +531,6 @@ exports.getDeliveryBoyOrders = async (req, res) => {
         updatedAt: order.updatedAt
       };
     });
-console.log(formattedOrders,'formattedorders');
 
     res.json({
       success: true,
@@ -581,8 +580,6 @@ exports.getCurrentDateDeliveries = async (req, res) => {
       .populate('parentAddressId', 'parentName studentName houseNo apartmentName areaName landMark cityName pincode')
       .populate('schoolRegistrationId')
       .sort({ createdAt: -1 });
-console.log(orders,'orders');
-console.log(orders,'orders count');
     // Filter orders that have deliveries for the target date
     const currentDateDeliveries = [];
 
@@ -642,15 +639,13 @@ console.log(orders,'orders count');
         });
       }
     });
-// console.log(currentDateDeliveries,'currentDateDeliveries');
-    // Sort by delivery time
+
     currentDateDeliveries.sort((a, b) => {
       const timeA = a.delivery.deliveryTime || '23:59';
       const timeB = b.delivery.deliveryTime || '23:59';
       return timeA.localeCompare(timeB);
     });
 
-    // Calculate statistics
     const totalDeliveries = currentDateDeliveries.length;
     const pendingDeliveries = currentDateDeliveries.filter(d => d.delivery.status === 'pending').length;
     const completedDeliveries = currentDateDeliveries.filter(d => d.delivery.status === 'delivered').length;
@@ -759,11 +754,6 @@ exports.updateOrderStatus = async (req, res) => {
     orderStartDate.setHours(0, 0, 0, 0);
     orderEndDate.setHours(0, 0, 0, 0);
     
-    console.log('Order validity period:', {
-      startDate: orderStartDate.toISOString(),
-      endDate: orderEndDate.toISOString(),
-      targetDate: targetDate.toISOString()
-    });
     
     // Check if target date is within order validity period
     if (targetDate < orderStartDate || targetDate > orderEndDate) {
@@ -777,16 +767,13 @@ exports.updateOrderStatus = async (req, res) => {
     let deliveryIndex = order.dailyDeliveries.findIndex(delivery => {
       const deliveryDate = new Date(delivery.date);
       deliveryDate.setHours(0, 0, 0, 0);
-      console.log(`Comparing: deliveryDate=${deliveryDate.toISOString()} vs targetDate=${targetDate.toISOString()}`);
+    
       return deliveryDate.getTime() === targetDate.getTime();
     });
 
-    console.log('Found delivery index:', deliveryIndex);
-
     // If delivery doesn't exist for this date, create it
     if (deliveryIndex === -1) {
-      console.log('Creating new delivery entry for date:', targetDate.toISOString());
-      
+     
       const newDelivery = {
         date: targetDate,
         status: 'pending',
@@ -798,7 +785,6 @@ exports.updateOrderStatus = async (req, res) => {
       order.dailyDeliveries.push(newDelivery);
       deliveryIndex = order.dailyDeliveries.length - 1;
       
-      console.log('New delivery created at index:', deliveryIndex);
     }
 
     const delivery = order.dailyDeliveries[deliveryIndex];
@@ -926,10 +912,8 @@ exports.syncDeliveryBoyWithUser = async (deliveryBoyId) => {
     }
 
     await user.save();
-    console.log(`User record synced for delivery boy: ${deliveryBoyId}`);
     return user;
   } catch (error) {
-    console.error('Error syncing delivery boy with user:', error);
     throw error;
   }
 }; 
@@ -1216,8 +1200,6 @@ exports.getMonthlyDailyDeliveries = async (req, res) => {
       year: 'numeric', 
       month: 'long' 
     });
-
-    console.log('Daily Stats:', dailyStats);
 
     res.json({
       success: true,

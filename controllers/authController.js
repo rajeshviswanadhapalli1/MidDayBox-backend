@@ -95,9 +95,6 @@ exports.registerParent = async (req, res) => {
   try {
     const { name, email, mobile, altMobile, password } = req.body;
 
-    console.log('Parent registration attempt:', { name, email, mobile, altMobile });
-
-    // Validate required fields
     const requiredFields = { name, email, mobile, password };
     const missingFields = Object.entries(requiredFields)
       .filter(([key, value]) => !value)
@@ -170,15 +167,9 @@ if (duplicateMessage) {
       parentData.altMobile = altMobile;
     }
 
-    console.log('Saving parent data:', { ...parentData, password: '[HIDDEN]' });
-
-    // Save to database
     const parent = new Parent(parentData);
     await parent.save();
 
-    console.log('Parent saved successfully with ID:', parent._id);
-
-    // Generate JWT token
     const token = jwt.sign(
       { id: parent._id, role: 'parent' }, 
       JWT_SECRET, 
@@ -312,14 +303,11 @@ if (duplicateMessage) {
     if (altMobile) {
       existingChecks.push({ field: 'altMobile', value: altMobile, message: 'Alternative mobile number already registered' });
     }
-console.log(existingChecks,'existingChecks');
 
     for (const check of existingChecks) {
       const existing = await DeliveryBoy.findOne({ [check.field]: check.value });
-      console.log(existing,'existing');
-      
+     
       if (existing) {
-        console.log(check.message,'check.message');
         
         return res.status(409).json({ message: check.message });
       }
@@ -417,16 +405,10 @@ console.log(existingChecks,'existingChecks');
 exports.checkUser = async (req, res) => {
   try {
     const { mobile } = req.params;
-    
-    console.log('Checking user with mobile:', mobile);
-    
-    // Check in collections
+   
     const parent = await Parent.findOne({ mobile });
     const deliveryBoy = await DeliveryBoy.findOne({ mobile });
     const school = await SchoolRegistration.findOne({ mobile });
-    
-    console.log('Parent found:', parent ? 'Yes' : 'No');
-    console.log('DeliveryBoy found:', deliveryBoy ? 'Yes' : 'No');
     
     res.json({
       success: true,
@@ -450,9 +432,6 @@ exports.loginUser = async (req, res) => {
   try {
     const { mobile, password } = req.body;
 
-    console.log('Login attempt for mobile:', mobile);
-
-    // Validate required fields
     if (!mobile || !password) {
       return res.status(400).json({ 
         success: false,
