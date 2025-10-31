@@ -5,9 +5,20 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const ParentAddress = require('../models/ParentAddress');
 const School = require('../models/School');
-
+// const sendOTP = require('../middleware/otpService');
+// const verifyOTP = require('../middleware/otpService');
+const { sendOTP, verifyOTP } = require('../middleware/otpService');
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwtkey';
 
+
+
+exports.verifyOtpController = async (req, res) => {
+  const { phone, otp, purpose } = req.body;
+  if (!phone || !otp) return res.status(400).json({ success: false, message: "Phone and OTP required" });
+
+  const result = await verifyOTP(phone, otp, purpose || "register");
+  return res.status(result.success ? 200 : 400).json(result);
+};
 exports.changePassword = async (req, res) => {
   try {
     const { oldPassword, newPassword} = req.body;
@@ -90,6 +101,26 @@ const checkDuplicateAcrossAllUsers = async ({ mobile, altMobile, email }) => {
 
   return null; // No duplicates
 };
+exports.sendOtpController = async (req, res) => {
+  const { mobile,altMobile, purpose,email } = req.body;
+  if (!mobile) return res.status(400).json({ success: false, message: "Phone is required" });
+const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile, email });
+if (duplicateMessage) {
+  return res.status(409).json({
+    success: false,
+    message: duplicateMessage
+  });
+}else{
+  if(purpose==="forgot_password"){
+    const result = await sendOTP(mobile, purpose || "forgot_password");
+  }else{
+    const result = await sendOTP(mobile, purpose || "register");
+    return res.status(result.success ? 200 : 500).json(result);
+  }
+}
+  // const result = await sendOTP(mobile, purpose || "register");
+  // return res.status(result.success ? 200 : 500).json(result);
+};
 // Register Parent
 exports.registerParent = async (req, res) => {
   try {
@@ -124,26 +155,6 @@ exports.registerParent = async (req, res) => {
       });
     }
 
-    // Check for existing mobile numbers
-    // const existingChecks = [
-    //   { field: 'mobile', value: mobile, message: 'Mobile number already registered' },
-    //   { field: 'email', value: email, message: 'Email already registered' }
-    // ];
-
-    // // Add altMobile check only if provided
-    // if (altMobile) {
-    //   existingChecks.push({ field: 'altMobile', value: altMobile, message: 'Alternative mobile number already registered' });
-    // }
-
-    // for (const check of existingChecks) {
-    //   const existing = await Parent.findOne({ [check.field]: check.value });
-    //   if (existing) {
-    //     return res.status(409).json({ 
-    //       success: false,
-    //       message: check.message 
-    //     });
-    //   }
-    // }
 const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile, email });
 if (duplicateMessage) {
   return res.status(409).json({
@@ -159,6 +170,7 @@ if (duplicateMessage) {
       name,
       email,
       mobile,
+      // altMobile,
       password: hashedPassword
     };
 
@@ -167,6 +179,9 @@ if (duplicateMessage) {
       parentData.altMobile = altMobile;
     }
 
+    //  const result = await verifyOTP(mobile,otp, purpose || "register");
+    //  if(result.success){
+    //   // Save to database
     const parent = new Parent(parentData);
     await parent.save();
 
@@ -195,7 +210,9 @@ if (duplicateMessage) {
       token,
       user: userResponse
     });
-
+  // }else{
+  //   return res.status(400).json({success:false,message:"OTP verification failed"});
+  // }
   } catch (error) {
     console.error('Parent registration error:', error);
     res.status(500).json({
@@ -439,27 +456,20 @@ exports.loginUser = async (req, res) => {
       });
     }
 
-    // Try to find user (Parent first, then DeliveryBoy, then SchoolRegistration)
-    console.log('Searching in Parent collection...');
     let user = await Parent.findOne({ mobile });
     let role = 'parent';
     
     if (!user) {
-      console.log('User not found in Parent, searching in DeliveryBoy collection...');
+
       user = await DeliveryBoy.findOne({ mobile });
       role = 'deliveryboy';
     }
 
     if (!user) {
-      console.log('User not found in DeliveryBoy, searching in SchoolRegistration collection...');
-      // Only allow approved schools to login
+     
       user = await SchoolRegistration.findOne({ mobile });
       role = 'school';
     }
-
-    console.log('User found:', user ? 'Yes' : 'No');
-    console.log('Role:', role);
-    console.log('User details:', user);
 
     if (!user) {
       return res.status(401).json({ 
@@ -468,10 +478,7 @@ exports.loginUser = async (req, res) => {
       });
     }
 
-    // Verify password
-    console.log('Verifying password...');
     const isMatch = await bcrypt.compare(password, user.password);
-    console.log('Password match:', isMatch);
     
     if (!isMatch) {
       return res.status(401).json({ 
@@ -528,8 +535,6 @@ exports.loginUser = async (req, res) => {
         status: user.status
       });
     }
-
-    console.log('Login successful for user:', userInfo.name);
 
     res.json({
       success: true,

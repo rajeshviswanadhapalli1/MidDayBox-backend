@@ -58,7 +58,7 @@ const handleMulterError = (err, req, res, next) => {
 
 // Routes
 router.post('/register/parent', authController.registerParent);
-
+router.post('/sendOtp', authController.sendOtpController);
 router.post('/register/deliveryboy', 
   upload.any(),
   handleMulterError,

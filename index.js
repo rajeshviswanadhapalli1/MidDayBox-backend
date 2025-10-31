@@ -15,7 +15,8 @@ cloudinary.config({
 const bodyParser = require('body-parser');
 const cors = require('cors');
 require('dotenv').config();
-
+// console.log("Razorpay Key ID:", process.env.RAZORPAY_KEY_ID);
+// console.log("Razorpay Key Secret:", process.env.RAZORPAY_KEY_SECRET ? "Loaded ✅" : "Missing ❌");
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());

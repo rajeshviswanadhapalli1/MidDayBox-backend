@@ -5,6 +5,7 @@ const ParentAddress = require('../models/ParentAddress');
 const School = require('../models/School');
 const SchoolRegistration = require('../models/SchoolRegistration');
 const DeliveryBoy = require('../models/DeliveryBoy');
+const Razorpay = require('razorpay');
 
 const toObjectId = value => {
   if (!value) return null;
@@ -45,7 +46,7 @@ const getAssignmentSummary = async filter => {
   return { assignedOrdersCount, unAssignedOrdersCount, totalOrders };
 };
 
-// Create new lunch box order
+// Create new lunch box order with payment integration
 exports.createOrder = async (req, res) => {
   try {
     const parentId = req.user.id;
@@ -132,26 +133,19 @@ exports.createOrder = async (req, res) => {
     // Calculate end date based on order type
     const start = new Date(startDate);
     const endDate = new Date(start);
-    // if(orderType === '15_days' || orderType === '30_days'){
-      if(orderType === 'today'){
-        endDate.setDate(endDate.getDate());
-      }else{
-        endDate.setDate(start.getDate() + (orderType === '15_days' ? 15 : 30));
-      }
-    // }
-    // endDate.setDate(start.getDate() + (orderType === '15_days' ? 15 : orderType === 'today'? 1 : 30));
+    if(orderType === 'today'){
+      endDate.setDate(endDate.getDate());
+    }else{
+      endDate.setDate(start.getDate() + (orderType === '15_days' ? 15 : 30));
+    }
 
-    // Calculate distance
-    const order = new Order();
-    // const distance = await order.calculateDistance(parentAddress, school);
-    
     // Calculate distance charge (example: ₹5 per km per day)
-    const distanceChargePerDay = Math.max(0, (distance - 5) * 5); // Free for first 5km
+    const distanceChargePerDay = Math.max(0, (distance - 5) * 5);
 
-    // Create order
+    // Prepare order data for storage
     const orderData = {
-      parentId,
       parentAddressId,
+      schoolId,
       schoolRegistrationId,
       schoolUniqueId,
       orderType,
@@ -162,51 +156,62 @@ exports.createOrder = async (req, res) => {
       distance,
       basePrice,
       distanceCharge: distanceChargePerDay,
-      totalAmount: basePrice, // Frontend-calculated pricing: store basePrice as totalAmount
+      totalAmount: basePrice,
       specialInstructions,
       dietaryRestrictions,
       lunchBoxType: lunchBoxType || 'standard'
     };
 
-    // Add schoolRegistrationId if provided
-    if (schoolRegistrationId) {
-      orderData.schoolRegistrationId = schoolRegistrationId;
-    }
+    const amount = Math.round(basePrice * 100);
 
-    const newOrder = new Order(orderData);
-    
-    // Generate daily deliveries
-    newOrder.generateDailyDeliveries();
-    console.log(newOrder,'newOrder');
-    
-    await newOrder.save();
-
-    // Add initial tracking entry
-    newOrder.trackingHistory.push({
-      action: 'order_created',
-      timestamp: new Date(),
-      notes: 'Lunch box delivery order created successfully'
-    });
-    await newOrder.save();
-
-    const { assignedOrdersCount, unAssignedOrdersCount } = await getAssignmentSummary({
-      schoolRegistrationId: newOrder.schoolRegistrationId,
-      schoolUniqueId: newOrder.schoolUniqueId
+   
+    const razorpay = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET
     });
 
-    res.status(201).json({
+    // Create Razorpay order
+    const razorpayOrder = await razorpay.orders.create({
+      amount: amount,
+      currency: 'INR',
+      receipt: `lunch_${Date.now()}`,
+      notes: {
+        parentId: parentId,
+        orderType: orderType
+      }
+    });
+
+    // Store order data temporarily with Razorpay order ID
+    const PaymentOrder = require('../models/PaymentOrder');
+    const paymentOrder = new PaymentOrder({
+      parentId,
+      razorpayOrderId: razorpayOrder.id,
+      orderData,
+      amount: basePrice,
+      currency: 'INR',
+      status: 'pending'
+    });
+
+    await paymentOrder.save();
+
+    res.status(200).json({
       success: true,
-      message: 'Lunch box order created successfully',
-      order: newOrder,
-      assignedOrdersCount,
-      unAssignedOrdersCount
+      message: 'Payment initiation successful. Complete payment to create order.',
+      data: {
+        paymentOrderId: paymentOrder._id,
+        razorpayOrderId: razorpayOrder.id,
+        amount: basePrice,
+        currency: 'INR',
+        keyId: process.env.RAZORPAY_KEY_ID,
+        orderDetails: orderData
+      }
     });
 
   } catch (error) {
     console.error('Create order error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create lunch box order. Please check your input data and try again.',
+      message: 'Failed to initiate order and payment. Please check your input data and try again.',
       error: error.message
     });
   }
