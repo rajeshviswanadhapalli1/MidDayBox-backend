@@ -1,96 +1,58 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const authController = require('../controllers/authController');
-const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
-const { authenticateUser, requireParent } = require('../middleware/auth');
+const { createUpload } = require("../middleware/uploadS3");
+const { authenticateUser, requireParent } = require("../middleware/auth");
+const authController = require("../controllers/authController");
+const tokenController = require("../controllers/tokenController");
 
-// Cloudinary configuration
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'ddgvpgr1v',
-  api_key: process.env.CLOUDINARY_API_KEY || '784931183392173',
-  api_secret: process.env.CLOUDINARY_API_SECRET || '2HUuKWEOhJNBYcvB7FUeQqPIpk0',
-});
+// File Uploaders
+const uploadDeliveryBoy = createUpload("deliveryboy");
+const uploadParentProfile = createUpload("parent-profile");
 
-// Multer storage configuration
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'delivery-app',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'pdf'],
-  },
-});
+// ✅ Parent Registration and Login
+router.post("/register/parent", authController.registerParent);
+router.post("/sendOtp", authController.sendOtpController);
+router.post("/verify-mobile", authController.verifyMobileForForgotPassword);
+router.post("/forgot-password", authController.forgotPassword);
+router.post("/login", authController.loginUser);
+router.post("/refresh", tokenController.refreshAccessToken);
+router.post("/logout", tokenController.logout);
+router.post("/logout-all", authenticateUser, tokenController.logoutAll);
+router.post("/changePassword", authenticateUser, authController.changePassword);
+router.get("/check-user/:mobile", authController.checkUser);
 
-// Multer upload configuration
-const upload = multer({ 
-  storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    // Allow only image files
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'), false);
-    }
-  }
-});
-
-// Error handling middleware for multer
-const handleMulterError = (err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    return res.status(400).json({ 
-      success: false,
-      message: 'File upload error', 
-      error: err.message
-    });
-  }
-  if (err.message === 'Only image files are allowed') {
-    return res.status(400).json({
-      success: false,
-      message: err.message
-    });
-  }
-  next(err);
-};
-
-// Routes
-router.post('/register/parent', authController.registerParent);
-router.post('/sendOtp', authController.sendOtpController);
-router.post('/register/deliveryboy', 
-  upload.any(),
-  handleMulterError,
+// ✅ Delivery Boy Registration (Multiple Images)
+router.post(
+  "/register/deliveryboy",
+  uploadDeliveryBoy.fields([
+    { name: "adharFrontUrl", maxCount: 1 },
+    { name: "adharBackUrl", maxCount: 1 },
+    { name: "drivingLicenceFrontUrl", maxCount: 1 },
+    { name: "drivingLicenceBackUrl", maxCount: 1 },
+  ]),
   authController.registerDeliveryBoy
 );
 
-router.post('/login', authController.loginUser);
-
-// Debug route to check if user exists
-router.get('/check-user/:mobile', authController.checkUser);
-router.post('/changePassword', authenticateUser, authController.changePassword)
-// Get parent addresses and schools (requires parent authentication)
-router.get('/parent/addresses-schools', 
-  authenticateUser, 
-  requireParent, 
-  authController.getParentAddressesAndSchools
-);
-
-// Update parent profile (multipart/form-data with optional image field "profilePicture")
-router.patch('/parent/profile', 
+// ✅ Parent Profile Update (Single Image)
+router.patch(
+  "/parent/profile",
   authenticateUser,
   requireParent,
-  upload.single('profilePicture'),
-  handleMulterError,
+  uploadParentProfile.single("profilePicture"),
   authController.updateParentProfile
 );
 
-// Get parent profile
-router.get('/parent/profile', 
+router.get(
+  "/parent/profile",
   authenticateUser,
   requireParent,
   authController.getParentProfile
 );
+router.get(
+  "/parent/addresses-schools",
+  authenticateUser,
+  requireParent,
+  authController.getParentAddressesAndSchools
+);
 
-module.exports = router;  
+module.exports = router;

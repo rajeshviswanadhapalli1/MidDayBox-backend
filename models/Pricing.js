@@ -23,6 +23,7 @@ const pricingSchema = new mongoose.Schema(
     boxPrice: { type: Number, required: true, min: 0 },
     gstPercent: { type: Number, required: true, min: 0, max: 100 },
     serviceChargePercent: { type: Number, required: true, min: 0, max: 100, default: 0 },
+    schoolPaymentPercent: { type: Number, min: 0, max: 100, default: 2 },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
   },
   { timestamps: true }

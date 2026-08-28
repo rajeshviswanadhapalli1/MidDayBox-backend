@@ -21,30 +21,52 @@ exports.getParentDashboard = async (req, res) => {
     const orders = await Order.find({ parentId })
       .populate('parentAddressId', 'parentName studentName')
       .populate('schoolId', 'schoolName')
-      .populate('schoolRegistrationId','schoolName mobile',)
+      .populate('schoolRegistrationId','schoolName mobile')
       .populate('deliveryBoyId', 'name mobile')
       .sort({ createdAt: -1 });
 
-    // Calculate monthly statistics
-    const monthlyStats = await calculateMonthlyStats(parentId, targetYear);
+    // Stats by delivery date (not order createdAt) — fixes prev/next month cards
+    const ordersForStats = await Order.find({ parentId }).select('dailyDeliveries noOfBoxes');
+    const monthlyStats = [];
+    for (let m = 0; m < 12; m++) {
+      monthlyStats.push(countDeliveriesForMonth(ordersForStats, m, targetYear));
+    }
+    const adjacentMonthlyStats = getAdjacentMonthlyStatsFromOrders(
+      ordersForStats,
+      targetMonth,
+      targetYear
+    );
 
     // Get calendar data for the specified month
     const calendarData = await getCalendarData(parentId, targetYear, targetMonth);
 
     // Get recent orders (last 5)
+    // const recentOrders = orders.slice(0, 5).map(order => ({
+    //   _id: order._id,
+    //   orderNumber: order.orderNumber,
+    //   schoolName: order.schoolRegistrationId?.schoolName || 'N/A',
+    //   schoolMobile: order.schoolRegistrationId.mobile || 'N/A',
+    //   deliveryBoyName: order.deliveryBoyId?.name || 'N/A',
+    //   deliveryBoyMobile: order.deliveryBoyId?.mobile || 'N/A',
+    //   status: order.status,
+    //   totalAmount: order.totalAmount,
+    //   startDate: order.startDate,
+    //   endDate: order.endDate,
+    //   createdAt: order.createdAt
+    // }));
     const recentOrders = orders.slice(0, 5).map(order => ({
-      _id: order._id,
-      orderNumber: order.orderNumber,
-      schoolName: order.schoolRegistrationId?.schoolName || 'N/A',
-      schoolMobile: order.schoolRegistrationId.mobile || 'N/A',
-      deliveryBoyName: order.deliveryBoyId?.name || 'N/A',
-      deliveryBoyMobile: order.deliveryBoyId?.mobile || 'N/A',
-      status: order.status,
-      totalAmount: order.totalAmount,
-      startDate: order.startDate,
-      endDate: order.endDate,
-      createdAt: order.createdAt
-    }));
+  _id: order._id,
+  orderNumber: order.orderNumber,
+  schoolName: order.schoolRegistrationId?.schoolName || 'N/A',
+  schoolMobile: order.schoolRegistrationId?.mobile || 'N/A',
+  deliveryBoyName: order.deliveryBoyId?.name || 'N/A',
+  deliveryBoyMobile: order.deliveryBoyId?.mobile || 'N/A',
+  status: order.status,
+  totalAmount: order.totalAmount,
+  startDate: order.startDate,
+  endDate: order.endDate,
+  createdAt: order.createdAt
+}));
 
     // Calculate overall statistics
     const totalOrders = orders.length;
@@ -62,6 +84,7 @@ exports.getParentDashboard = async (req, res) => {
           pendingOrders
         },
         monthlyStats,
+        adjacentMonthlyStats,
         calendarData,
         recentOrders
       }
@@ -77,53 +100,70 @@ exports.getParentDashboard = async (req, res) => {
   }
 };
 
-// Calculate monthly statistics for the year
-const calculateMonthlyStats = async (parentId, year) => {
-  const monthlyStats = [];
-  
-  for (let month = 0; month < 12; month++) {
-    const startOfMonth = new Date(year, month, 1);
-    const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
-    
-    // Get orders for this month
-    const monthOrders = await Order.find({
-      parentId,
-      createdAt: { $gte: startOfMonth, $lte: endOfMonth }
+function normalizeDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function countDeliveriesForMonth(orders, monthIndex, year) {
+  let totalDeliveries = 0;
+  let completedDeliveries = 0;
+  let pendingDeliveries = 0;
+  const orderIdsInMonth = new Set();
+
+  orders.forEach((order) => {
+    const boxesPerDay = Number(order.noOfBoxes) > 0 ? Number(order.noOfBoxes) : 1;
+
+    order.dailyDeliveries.forEach((delivery) => {
+      const deliveryDate = normalizeDay(delivery.date);
+      if (deliveryDate.getMonth() !== monthIndex || deliveryDate.getFullYear() !== year) {
+        return;
+      }
+
+      orderIdsInMonth.add(String(order._id));
+      totalDeliveries += boxesPerDay;
+
+      if (delivery.status === 'delivered') {
+        completedDeliveries += boxesPerDay;
+      } else if (['pending', 'picked_up'].includes(delivery.status)) {
+        pendingDeliveries += boxesPerDay;
+      }
     });
+  });
 
-    let totalDeliveries = 0;
-    let completedDeliveries = 0;
-    let pendingDeliveries = 0;
+  const monthName = new Date(year, monthIndex).toLocaleString('default', { month: 'short' });
 
-    monthOrders.forEach(order => {
-      order.dailyDeliveries.forEach(delivery => {
-        const deliveryDate = new Date(delivery.date);
-        if (deliveryDate.getMonth() === month && deliveryDate.getFullYear() === year) {
-          totalDeliveries++;
-          if (delivery.status === 'delivered') {
-            completedDeliveries++;
-          } else if (delivery.status === 'pending') {
-            pendingDeliveries++;
-          }
-        }
-      });
-    });
+  return {
+    month: monthName,
+    year,
+    monthNumber: monthIndex + 1,
+    totalDeliveries,
+    completedDeliveries,
+    pendingDeliveries,
+    totalBoxes: totalDeliveries,
+    completedBoxes: completedDeliveries,
+    pendingBoxes: pendingDeliveries,
+    orderCount: orderIdsInMonth.size
+  };
+}
 
-    const monthName = new Date(year, month).toLocaleString('default', { month: 'short' });
-    
-    monthlyStats.push({
-      month: monthName,
-      year: year,
-      monthNumber: month + 1,
-      totalDeliveries,
-      completedDeliveries,
-      pendingDeliveries,
-      orderCount: monthOrders.length
-    });
-  }
+/** Prev / current / next month stats for dashboard cards (handles year boundaries). */
+function getAdjacentMonthlyStatsFromOrders(orders, centerMonthIndex, centerYear) {
+  const offsets = [-1, 0, 1];
+  const labels = ['previous', 'current', 'next'];
 
-  return monthlyStats;
-};
+  return offsets.map((offset, i) => {
+    const d = new Date(centerYear, centerMonthIndex + offset, 1);
+    const monthIndex = d.getMonth();
+    const year = d.getFullYear();
+
+    return {
+      position: labels[i],
+      ...countDeliveriesForMonth(orders, monthIndex, year)
+    };
+  });
+}
 
 // Get calendar data for a specific month
 const getCalendarData = async (parentId, year, month) => {

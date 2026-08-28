@@ -9,6 +9,7 @@ router.use(authenticateUser);
 
 // School routes FIRST
 router.get('/by-school', requireSchool, orderController.getOrdersBySchool);
+router.get('/school/orders-list', requireSchool, orderController.getSchoolOrdersList);
 
 // Parent routes
 router.use('/parent', requireParent);

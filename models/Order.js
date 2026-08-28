@@ -158,7 +158,13 @@ const orderSchema = new mongoose.Schema({
     enum: ['active', 'paused', 'completed', 'cancelled'],
     default: 'active'
   },
-
+  payForSchool: {
+    type: String,
+    enum: ['pending', 'completed'],
+    default: 'pending'
+  },
+  schoolPaymentPercent: { type: Number, default: null },
+  schoolPaymentAmount: { type: Number, default: null },
   paymentStatus: {
     type: String,
     enum: ['pending', 'paid', 'failed'],
@@ -180,7 +186,29 @@ const orderSchema = new mongoose.Schema({
     notes: { type: String, required: false }
   }]
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: {
+    virtuals: true,
+    transform(doc, ret) {
+      ret.schoolPayment = {
+        status: ret.payForSchool || 'pending',
+        percent: ret.schoolPaymentPercent ?? null,
+        amount: ret.schoolPaymentAmount ?? null
+      };
+      return ret;
+    }
+  },
+  toObject: {
+    virtuals: true,
+    transform(doc, ret) {
+      ret.schoolPayment = {
+        status: ret.payForSchool || 'pending',
+        percent: ret.schoolPaymentPercent ?? null,
+        amount: ret.schoolPaymentAmount ?? null
+      };
+      return ret;
+    }
+  }
 });
 
 // Generate order number
@@ -233,54 +261,27 @@ orderSchema.methods.calculateTotalAmount = function() {
   return this.totalAmount;
 };
 
-// Method to generate daily deliveries
-orderSchema.methods.generateDailyDeliveries = function() {
-  const deliveries = [];
-  const today = new Date();
-  today.setHours(0,0,0,0); // normalize time
+// Method to generate daily deliveries (15/30 calendar-day window; Sundays excluded)
+orderSchema.methods.generateDailyDeliveries = function () {
+  const {
+    buildDeliverySchedule,
+    scheduleToDailyDeliveries
+  } = require('../utils/orderSchedule');
 
-  const startDate = new Date(this.startDate);
-  startDate.setHours(0,0,0,0);
-  const endDate = new Date(this.endDate);
-  endDate.setHours(0,0,0,0);
+  const schedule = buildDeliverySchedule({
+    startDate: this.startDate,
+    orderType: this.orderType
+  });
 
-  // Handle single-day (today) orders separately so that the delivery is created for the same day
-  if (this.orderType === 'today') {
-    if (startDate.getDay() !== 0) { // still skip Sundays
-      deliveries.push({
-        date: new Date(startDate),
-        status: 'pending'
-      });
-    }
-
-    this.dailyDeliveries = deliveries;
-    return deliveries;
+  if (!schedule.ok) {
+    this.dailyDeliveries = [];
+    return [];
   }
 
-  let currentDate;
-
-  // If startDate is in the current month, start from tomorrow
-  if (startDate.getMonth() === today.getMonth() && startDate.getFullYear() === today.getFullYear()) {
-    currentDate = new Date(today);
-    currentDate.setDate(currentDate.getDate() + 1); // start from tomorrow
-  } else {
-    // If startDate is in a future month, start from 1st day of that month
-    currentDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-  }
-
-  while (currentDate <= endDate) {
-    const dayOfWeek = currentDate.getDay(); // Sunday = 0
-    if (dayOfWeek !== 0) { // skip only Sundays
-      deliveries.push({
-        date: new Date(currentDate),
-        status: 'pending'
-      });
-    }
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-
-  this.dailyDeliveries = deliveries;
-  return deliveries;
+  this.startDate = schedule.startDate;
+  this.endDate = schedule.endDate;
+  this.dailyDeliveries = scheduleToDailyDeliveries(schedule);
+  return this.dailyDeliveries;
 };
 
 

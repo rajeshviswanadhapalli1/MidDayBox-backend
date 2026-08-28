@@ -1,3 +1,6 @@
+const fs = require("fs");
+const { s3 } = require("../config/aws-s3");
+const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const DeliveryBoy = require('../models/DeliveryBoy');
 const Order = require('../models/Order');
 const User = require('../models/User');
@@ -134,101 +137,98 @@ exports.updateDeliveryBoyProfile = async (req, res) => {
   try {
     const deliveryBoyId = req.user.id;
     const { name, mobile, altMobile, vehicleNo } = req.body;
-    
-    // First, fetch the delivery boy to check if they exist
+
+    // 🟡 Fetch delivery boy
     const deliveryBoy = await DeliveryBoy.findById(deliveryBoyId);
     if (!deliveryBoy) {
       return res.status(404).json({
         success: false,
-        message: 'Delivery boy not found'
+        message: "Delivery boy not found",
       });
     }
-    
-    // Handle profile picture upload
+
+    // 🟢 Handle new profile picture from S3
     let profilePictureUrl = null;
+
     if (req.file) {
-      // Cloudinary returns the URL in req.file.path
-      profilePictureUrl = req.file.path;
-      
-      // Delete old profile picture from Cloudinary if it exists
+      // multer-s3 provides `req.file.location` as the public URL
+      profilePictureUrl = req.file.location;
+
+      // If there's an old profile picture, delete it from S3
       if (deliveryBoy.profilePicture) {
         try {
-          // Extract public_id from the old URL
-          const oldUrlParts = deliveryBoy.profilePicture.split('/');
-          const oldPublicId = oldUrlParts[oldUrlParts.length - 1].split('.')[0];
-          
-          // Delete from Cloudinary
-          await cloudinary.uploader.destroy(oldPublicId);
-        
-        } catch (error) {
-          console.error('Error deleting old profile picture:', error);
-          // Continue with the update even if deletion fails
+          const oldUrl = deliveryBoy.profilePicture;
+          const urlParts = oldUrl.split("/");
+          const key = urlParts.slice(3).join("/"); // skip https://bucket.s3.region.amazonaws.com/
+          const bucket = process.env.AWS_S3_BUCKET;
+
+          await s3.send(
+            new DeleteObjectCommand({
+              Bucket: bucket,
+              Key: key,
+            })
+          );
+        } catch (err) {
+          console.warn("⚠️ Failed to delete old image from S3:", err.message);
         }
       }
     }
 
-    // Update allowed fields
+    // 🟢 Update allowed fields
     if (name) deliveryBoy.name = name;
+
     if (mobile) {
-      // Check if mobile number is already taken by another delivery boy
-      const existingDeliveryBoy = await DeliveryBoy.findOne({ 
-        mobile: mobile, 
-        _id: { $ne: deliveryBoyId } 
+      const existing = await DeliveryBoy.findOne({
+        mobile,
+        _id: { $ne: deliveryBoyId },
       });
-      
-      if (existingDeliveryBoy) {
+      if (existing) {
         return res.status(400).json({
           success: false,
-          message: 'Mobile number is already registered with another delivery boy'
+          message: "Mobile number already in use",
         });
       }
-      
       deliveryBoy.mobile = mobile;
     }
+
     if (altMobile) {
-      // Check if alt mobile number is already taken by another delivery boy
-      const existingDeliveryBoy = await DeliveryBoy.findOne({ 
-        altMobile: altMobile, 
-        _id: { $ne: deliveryBoyId } 
+      const existing = await DeliveryBoy.findOne({
+        altMobile,
+        _id: { $ne: deliveryBoyId },
       });
-      
-      if (existingDeliveryBoy) {
+      if (existing) {
         return res.status(400).json({
           success: false,
-          message: 'Alternative mobile number is already registered with another delivery boy'
+          message: "Alternative mobile number already in use",
         });
       }
-      
       deliveryBoy.altMobile = altMobile;
     }
+
     if (vehicleNo) deliveryBoy.vehicleNo = vehicleNo;
     if (profilePictureUrl) deliveryBoy.profilePicture = profilePictureUrl;
 
+    // 🟢 Save updated delivery boy
     await deliveryBoy.save();
 
-    // Update corresponding User record
+    // 🟢 Sync with User record
     try {
-      const user = await User.findOne({ deliveryBoyId: deliveryBoyId });
+      const user = await User.findOne({ deliveryBoyId });
       if (user) {
-        // Update user fields that match delivery boy fields
         if (name) user.name = name;
         if (mobile) user.mobile = mobile;
         if (altMobile) user.altMobile = altMobile;
         if (profilePictureUrl) user.profilePicture = profilePictureUrl;
-        
         await user.save();
-       
-      } else {
-       
       }
-    } catch (userError) {
-      console.error('Error updating User record:', userError);
-      // Continue with delivery boy update even if user update fails
+    } catch (err) {
+      console.error("Error updating user record:", err);
     }
 
-    res.json({
+    // 🟢 Success response
+    return res.json({
       success: true,
-      message: 'Profile updated successfully',
+      message: "Profile updated successfully",
       deliveryBoy: {
         id: deliveryBoy._id,
         name: deliveryBoy.name,
@@ -239,17 +239,16 @@ exports.updateDeliveryBoyProfile = async (req, res) => {
         vehicleNo: deliveryBoy.vehicleNo,
         profilePicture: deliveryBoy.profilePicture,
         schoolUniqueId: deliveryBoy.schoolUniqueId || null,
-        schoolRegistrationId: deliveryBoy.schoolRegistrationId || null
+        schoolRegistrationId: deliveryBoy.schoolRegistrationId || null,
       },
-      userUpdated: true
+      userUpdated: true,
     });
-
   } catch (error) {
-    console.error('Update delivery boy profile error:', error);
-    res.status(500).json({
+    console.error("Update delivery boy profile error:", error);
+    return res.status(500).json({
       success: false,
-      message: 'Server error while updating profile',
-      error: error.message
+      message: "Server error while updating profile",
+      error: error.message,
     });
   }
 };

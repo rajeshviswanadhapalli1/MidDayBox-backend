@@ -2,9 +2,9 @@ const mongoose = require('mongoose');
 
 const deliveryBoySchema = new mongoose.Schema({
   name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
+  email: { type: String, required: false, },
   mobile: { type: String, required: true, unique: true },
-  altMobile: { type: String, unique: true, sparse: true }, // Made optional
+  altMobile: { type: String, required: false, }, // Made optional
   password: { type: String, required: true },
   vehicleType: { type: String, enum: ['2 wheeler', '3 wheeler'], required: true },
   vehicleNo: { type: String, required: true },

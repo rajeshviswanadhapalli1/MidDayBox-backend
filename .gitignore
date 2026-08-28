@@ -1,2 +1,10 @@
 node_modules
 .env
+.DS_Store
+
+# Secrets & credentials (never commit)
+config/ServiceAccountKey.json
+Rajesh@123
+Rajesh@123.pub
+*.pem
+*.key

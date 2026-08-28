@@ -2,22 +2,53 @@ const Parent = require('../models/Parent');
 const DeliveryBoy = require('../models/DeliveryBoy');
 const SchoolRegistration = require('../models/SchoolRegistration');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const { issueTokenPair } = require('../utils/tokenService');
 const ParentAddress = require('../models/ParentAddress');
 const School = require('../models/School');
 // const sendOTP = require('../middleware/otpService');
 // const verifyOTP = require('../middleware/otpService');
 const { sendOTP, verifyOTP } = require('../middleware/otpService');
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwtkey';
+const fs = require('fs');
+const { s3 } = require('../config/aws-s3');
+const { PutObjectCommand } = require('@aws-sdk/client-s3');
 
 
 
 exports.verifyOtpController = async (req, res) => {
-  const { phone, otp, purpose } = req.body;
-  if (!phone || !otp) return res.status(400).json({ success: false, message: "Phone and OTP required" });
+  const { phone, mobile, otp, purpose } = req.body;
+  const targetMobile = mobile || phone;
+  if (!targetMobile || !otp) return res.status(400).json({ success: false, message: "Mobile and OTP required" });
 
-  const result = await verifyOTP(phone, otp, purpose || "register");
+  const result = await verifyOTP(targetMobile, otp, purpose || "register");
   return res.status(result.success ? 200 : 400).json(result);
+};
+
+exports.verifyMobileForForgotPassword = async (req, res) => {
+  try {
+    const { mobile } = req.body;
+
+    if (!mobile) {
+      return res.status(400).json({ success: false, message: 'Mobile is required' });
+    }
+
+    const userData = await findUserByMobile(mobile);
+    if (!userData) {
+      return res.status(404).json({ success: false, message: 'User not found for provided mobile' });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Mobile verified successfully',
+      role: userData.role
+    });
+  } catch (error) {
+    console.error('Verify mobile error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while verifying mobile',
+      error: error.message
+    });
+  }
 };
 exports.changePassword = async (req, res) => {
   try {
@@ -72,16 +103,15 @@ exports.changePassword = async (req, res) => {
   }
 };
 const checkDuplicateAcrossAllUsers = async ({ mobile, altMobile, email }) => {
-  // Check mobile
   if (mobile) {
     const mobileExists =
       (await Parent.findOne({ mobile })) ||
       (await DeliveryBoy.findOne({ mobile })) ||
       (await SchoolRegistration.findOne({ mobile }));
+    console.log(mobileExists,'mobileExists');
     if (mobileExists) return 'Mobile number already registered';
   }
 
-  // Check altMobile
   if (altMobile !== '') {
     const altMobileExists =
       (await Parent.findOne({ altMobile })) ||
@@ -90,7 +120,6 @@ const checkDuplicateAcrossAllUsers = async ({ mobile, altMobile, email }) => {
     if (altMobileExists) return 'Alternative mobile number already registered';
   }
 
-  // Check email
   if (email) {
     const emailExists =
       (await Parent.findOne({ email })) ||
@@ -99,34 +128,80 @@ const checkDuplicateAcrossAllUsers = async ({ mobile, altMobile, email }) => {
     if (emailExists) return 'Email already registered';
   }
 
-  return null; // No duplicates
+  return null;
 };
+
+const findUserByMobile = async (mobile) => {
+  let user = await Parent.findOne({ mobile });
+  if (user) return { user, role: 'parent' };
+  user = await DeliveryBoy.findOne({ mobile });
+  if (user) return { user, role: 'deliveryboy' };
+  user = await SchoolRegistration.findOne({ mobile });
+  if (user) return { user, role: 'school' };
+  return null;
+};
+
 exports.sendOtpController = async (req, res) => {
-  const { mobile,altMobile, purpose,email } = req.body;
-  if (!mobile) return res.status(400).json({ success: false, message: "Phone is required" });
-const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile, email });
-if (duplicateMessage) {
-  return res.status(409).json({
-    success: false,
-    message: duplicateMessage
-  });
-}else{
-  if(purpose==="forgot_password"){
-    const result = await sendOTP(mobile, purpose || "forgot_password");
-  }else{
-    const result = await sendOTP(mobile, purpose || "register");
-    return res.status(result.success ? 200 : 500).json(result);
+  const { mobile, altMobile, purpose, email } = req.body;
+  console.log(mobile,altMobile, purpose,email );
+
+  if (!mobile) return res.status(400).json({ success: false, message: "Mobile is required" });
+
+  const otpPurpose = purpose === 'forgot_password' ? 'forgot_password' : 'register';
+
+  if (otpPurpose === 'register') {
+    const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile, email });
+    if (duplicateMessage) {
+      return res.status(409).json({
+        success: false,
+        message: duplicateMessage
+      });
+    }
+  } else {
+    const existingUser = await findUserByMobile(mobile);
+    if (!existingUser) {
+      return res.status(404).json({ success: false, message: 'User not found for provided mobile' });
+    }
   }
-}
-  // const result = await sendOTP(mobile, purpose || "register");
-  // return res.status(result.success ? 200 : 500).json(result);
+
+  const result = await sendOTP(mobile, otpPurpose);
+  return res.status(result.success ? 200 : 500).json(result);
+};
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { mobile, newPassword } = req.body;
+
+    if (!mobile || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Mobile,  and new password are required' });
+    }
+
+    const userData = await findUserByMobile(mobile);
+    if (!userData) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // const otpResult = await verifyOTP(mobile, otp, 'forgot_password');
+    // if (!otpResult.success) {
+    //   return res.status(400).json({ success: false, message: otpResult.message });
+    // }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    userData.user.password = hashedPassword;
+    await userData.user.save();
+
+    return res.json({ success: true, message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return res.status(500).json({ success: false, message: 'Server error while resetting password', error: error.message });
+  }
 };
 // Register Parent
 exports.registerParent = async (req, res) => {
   try {
-    const { name, email, mobile, altMobile, password } = req.body;
+    const { name, email, mobile, altMobile, password, otp } = req.body;
 
-    const requiredFields = { name, email, mobile, password };
+    const requiredFields = { name, email, mobile, password, otp };
     const missingFields = Object.entries(requiredFields)
       .filter(([key, value]) => !value)
       .map(([key]) => key);
@@ -155,13 +230,23 @@ exports.registerParent = async (req, res) => {
       });
     }
 
-const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile, email });
-if (duplicateMessage) {
-  return res.status(409).json({
-    success: false,
-    message: duplicateMessage
-  });
-}
+    // Verify OTP before proceeding
+    const otpResult = await verifyOTP(mobile, otp, "register");
+    if (!otpResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: otpResult.message
+      });
+    }
+
+    // const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile, email });
+    // if (duplicateMessage) {
+    //   return res.status(409).json({
+    //     success: false,
+    //     message: duplicateMessage
+    //   });
+    // }
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -170,7 +255,6 @@ if (duplicateMessage) {
       name,
       email,
       mobile,
-      // altMobile,
       password: hashedPassword
     };
 
@@ -179,17 +263,15 @@ if (duplicateMessage) {
       parentData.altMobile = altMobile;
     }
 
-    //  const result = await verifyOTP(mobile,otp, purpose || "register");
-    //  if(result.success){
-    //   // Save to database
+    // Save to database only after OTP verification
     const parent = new Parent(parentData);
     await parent.save();
 
-    const token = jwt.sign(
-      { id: parent._id, role: 'parent' }, 
-      JWT_SECRET, 
-      { expiresIn: '7d' }
-    );
+    const tokens = await issueTokenPair({
+      userId: parent._id,
+      role: 'parent',
+      req
+    });
 
     // Prepare response
     const userResponse = {
@@ -207,12 +289,13 @@ if (duplicateMessage) {
     res.status(201).json({
       success: true,
       message: 'Parent registered successfully',
-      token,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      token: tokens.accessToken,
+      expiresIn: tokens.expiresIn,
+      refreshExpiresAt: tokens.refreshExpiresAt,
       user: userResponse
     });
-  // }else{
-  //   return res.status(400).json({success:false,message:"OTP verification failed"});
-  // }
   } catch (error) {
     console.error('Parent registration error:', error);
     res.status(500).json({
@@ -240,92 +323,93 @@ exports.registerDeliveryBoy = async (req, res) => {
       schoolUniqueId
     } = req.body;
 
-    // Validate required fields (altMobile is optional)
+    // Required fields
     const requiredFields = {
-      name, email, mobile, password, 
-      vehicleType, vehicleNo, drivingLicenceNumber, adharNumber,schoolUniqueId
+      name, mobile, password,
+      vehicleType, vehicleNo, drivingLicenceNumber, adharNumber, schoolUniqueId
     };
 
     const missingFields = Object.entries(requiredFields)
-      .filter(([key, value]) => !value)
-      .map(([key]) => key);
+      .filter(([k, v]) => !v)
+      .map(([k]) => k);
 
     if (missingFields.length > 0) {
-      return res.status(400).json({ 
-        message: 'Missing required fields', 
-        missingFields 
+      return res.status(400).json({
+        message: "Missing required fields",
+        missingFields
       });
     }
 
     // Validate vehicle type
-    if (!['2 wheeler', '3 wheeler'].includes(vehicleType)) {
-      return res.status(400).json({ 
-        message: 'Vehicle type must be either "2 wheeler" or "3 wheeler"' 
+    if (!["2 wheeler", "3 wheeler"].includes(vehicleType)) {
+      return res.status(400).json({
+        message: 'Vehicle type must be either "2 wheeler" or "3 wheeler"'
       });
     }
 
-    // Process uploaded files
-    const uploadedFiles = req.files || [];
-    const fileMap = {};
-    
-    uploadedFiles.forEach(file => {
-      fileMap[file.fieldname] = file;
-    });
+    console.log("Received file fields:", Object.keys(req.files || {}));
 
-    // Define expected file fields and their variations (including frontend field names)
-    const fileFields = {
-      adharFront: ['adharFront', 'adhar_front', 'aadharFront', 'aadhar_front', 'adharFrontUrl'],
-      adharBack: ['adharBack', 'adhar_back', 'aadharBack', 'aadhar_back', 'adharBackUrl'],
-      drivingLicenceFront: ['drivingLicenceFront', 'driving_licence_front', 'drivingLicenseFront', 'licenseFront', 'drivingLicenceFrontUrl'],
-      drivingLicenceBack: ['drivingLicenceBack', 'driving_licence_back', 'drivingLicenseBack', 'licenseBack', 'drivingLicenceBackUrl']
-    };
+    // ------------------------------------------------------
+    // ✅ Correct way to access multer fields
+    // ------------------------------------------------------
+    const adharFront = req.files?.adharFrontUrl?.[0] || null;
+    const adharBack = req.files?.adharBackUrl?.[0] || null;
+    const dlFront = req.files?.drivingLicenceFrontUrl?.[0] || null;
+    const dlBack = req.files?.drivingLicenceBackUrl?.[0] || null;
 
-    // Map files to expected field names
-    const fileUrls = {};
     const missingFiles = [];
-
-    for (const [expectedField, variations] of Object.entries(fileFields)) {
-      const foundFile = variations.find(variation => fileMap[variation]);
-      
-      if (foundFile) {
-        fileUrls[expectedField] = fileMap[foundFile].path;
-      } else {
-        missingFiles.push(expectedField);
-      }
-    }
+    if (!adharFront) missingFiles.push("adharFrontUrl");
+    if (!adharBack) missingFiles.push("adharBackUrl");
+    if (!dlFront) missingFiles.push("drivingLicenceFrontUrl");
+    if (!dlBack) missingFiles.push("drivingLicenceBackUrl");
 
     if (missingFiles.length > 0) {
       return res.status(400).json({
-        message: 'Missing required document images',
+        message: "Missing required document images",
         missingFiles,
-        receivedFiles: Object.keys(fileMap)
+        receivedFiles: Object.keys(req.files || {})
       });
     }
-const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile:'', email });
-if (duplicateMessage) {
-  return res.status(409).json({
-    success: false,
-    message: duplicateMessage
-  });
-}
-    // Check for existing records (skip altMobile if not provided)
+
+    // Determine final file URLs (S3 = location, local = path)
+    const fileUrls = {
+      adharFrontUrl: adharFront.location || adharFront.path,
+      adharBackUrl: adharBack.location || adharBack.path,
+      drivingLicenceFrontUrl: dlFront.location || dlFront.path,
+      drivingLicenceBackUrl: dlBack.location || dlBack.path,
+    };
+
+    // ------------------------------------------------------
+    // Duplicate checking across all users
+    // ------------------------------------------------------
+    const duplicateMessage = await checkDuplicateAcrossAllUsers({
+      mobile, altMobile: '', email
+    });
+
+    if (duplicateMessage) {
+      return res.status(409).json({
+        success: false,
+        message: duplicateMessage
+      });
+    }
+
+    // Checks for existing values
     const existingChecks = [
-      // { field: 'mobile', value: mobile, message: 'Mobile number already registered' },
-      // { field: 'email', value: email, message: 'Email already registered' },
-      { field: 'drivingLicenceNumber', value: drivingLicenceNumber, message: 'Driving licence number already registered' },
-      { field: 'adharNumber', value: adharNumber, message: 'Adhar number already registered' }
+      { field: "drivingLicenceNumber", value: drivingLicenceNumber, message: "Driving licence number already registered" },
+      { field: "adharNumber", value: adharNumber, message: "Aadhar number already registered" }
     ];
 
-    // Add altMobile check only if it's provided
     if (altMobile) {
-      existingChecks.push({ field: 'altMobile', value: altMobile, message: 'Alternative mobile number already registered' });
+      existingChecks.push({
+        field: "altMobile",
+        value: altMobile,
+        message: "Alternative mobile number already registered"
+      });
     }
 
     for (const check of existingChecks) {
       const existing = await DeliveryBoy.findOne({ [check.field]: check.value });
-     
       if (existing) {
-        
         return res.status(409).json({ message: check.message });
       }
     }
@@ -333,87 +417,64 @@ if (duplicateMessage) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create delivery boy object
+    // SCHOOL CONNECTION
+    let schoolRegistrationId = null;
+
+    const school = await SchoolRegistration.findOne({ schoolUniqueId });
+    if (!school) {
+      return res.status(400).json({ success: false, message: "Invalid schoolUniqueId" });
+    }
+    schoolRegistrationId = school._id;
+
+    // ------------------------------------------------------
+    // Create DeliveryBoy object
+    // ------------------------------------------------------
     const deliveryBoyData = {
       name,
       email,
       mobile,
-      altMobile,
-      password: hashedPassword,
       vehicleType,
       vehicleNo,
       drivingLicenceNumber,
       adharNumber,
+      password: hashedPassword,
       schoolUniqueId,
-      adharFrontUrl: fileUrls.adharFront,
-      adharBackUrl: fileUrls.adharBack,
-      drivingLicenceFrontUrl: fileUrls.drivingLicenceFront,
-      drivingLicenceBackUrl: fileUrls.drivingLicenceBack
+      schoolRegistrationId,
+      ...fileUrls,
     };
 
-    // Add altMobile only if provided
-    if (altMobile) {
-      deliveryBoyData.altMobile = altMobile;
-    }
+    if (altMobile) deliveryBoyData.altMobile = altMobile;
 
-    // If schoolUniqueId provided, resolve and link to school registration
-    if (schoolUniqueId) {
-      const reg = await SchoolRegistration.findOne({ schoolUniqueId });
-      if (!reg) {
-        return res.status(400).json({ success: false, message: 'Invalid schoolUniqueId' });
-      }
-      deliveryBoyData.schoolUniqueId = schoolUniqueId;
-      deliveryBoyData.schoolRegistrationId = reg._id;
-    }
-
-    // Save to database
+    // Save to DB
     const deliveryBoy = new DeliveryBoy(deliveryBoyData);
     await deliveryBoy.save();
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { id: deliveryBoy._id, role: 'deliveryboy' }, 
-      JWT_SECRET, 
-      { expiresIn: '7d' }
-    );
-
-    // Prepare response
-    const userResponse = {
-      id: deliveryBoy._id,
-      name,
-      email,
-      mobile,
-      altMobile: altMobile || null,
-      vehicleType,
-      vehicleNo,
-      drivingLicenceNumber,
-      adharNumber,
-      adharFrontUrl: fileUrls.adharFront,
-      adharBackUrl: fileUrls.adharBack,
-      drivingLicenceFrontUrl: fileUrls.drivingLicenceFront,
-      drivingLicenceBackUrl: fileUrls.drivingLicenceBack,
-      schoolUniqueId: deliveryBoy.schoolUniqueId || null,
-      schoolRegistrationId: deliveryBoy.schoolRegistrationId || null
-    };
-
-    // Add altMobile to response if provided
-    if (altMobile) {
-      userResponse.altMobile = altMobile;
-    }
+    const tokens = await issueTokenPair({
+      userId: deliveryBoy._id,
+      role: 'deliveryboy',
+      req
+    });
 
     res.status(201).json({
       success: true,
-      message: 'Delivery boy registered successfully',
-      token,
-      user: userResponse
+      message: "Delivery boy registered successfully",
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      token: tokens.accessToken,
+      expiresIn: tokens.expiresIn,
+      refreshExpiresAt: tokens.refreshExpiresAt,
+      user: {
+        id: deliveryBoy._id,
+        ...deliveryBoyData,
+      }
     });
 
   } catch (error) {
-    console.error('Delivery boy registration error:', error);
+    console.error("Delivery boy registration error:", error);
     res.status(500).json({
       success: false,
-      message: 'Failed to register delivery boy. Please check your input and try again.',
-      error: error.message
+      message: "Failed to register delivery boy",
+      error: error.message,
     });
   }
 };
@@ -448,7 +509,7 @@ exports.checkUser = async (req, res) => {
 exports.loginUser = async (req, res) => {
   try {
     const { mobile, password } = req.body;
-
+console.log(mobile, password);
     if (!mobile || !password) {
       return res.status(400).json({ 
         success: false,
@@ -487,12 +548,11 @@ exports.loginUser = async (req, res) => {
       });
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { id: user._id, role }, 
-      JWT_SECRET, 
-      { expiresIn: '7d' }
-    );
+    const tokens = await issueTokenPair({
+      userId: user._id,
+      role,
+      req
+    });
 
     // Prepare user info
     const userInfo = {
@@ -521,6 +581,27 @@ exports.loginUser = async (req, res) => {
         drivingLicenceBackUrl: user.drivingLicenceBackUrl,
         status: user.status
       });
+
+      // Include the school details who added/approved this delivery boy (if available)
+      const addedBySchoolId = user.schoolRegistrationId || user.approvedBy || null;
+      if (addedBySchoolId) {
+        const addedBySchool = await SchoolRegistration.findById(addedBySchoolId).select(
+          'schoolName schoolUniqueId contactName mobile email recogniseId branchNumber status'
+        );
+        if (addedBySchool) {
+          userInfo.addedBySchool = {
+            id: addedBySchool._id,
+            schoolName: addedBySchool.schoolName,
+            schoolUniqueId: addedBySchool.schoolUniqueId,
+            contactName: addedBySchool.contactName,
+            mobile: addedBySchool.mobile,
+            email: addedBySchool.email,
+            recogniseId: addedBySchool.recogniseId,
+            branchNumber: addedBySchool.branchNumber,
+            status: addedBySchool.status
+          };
+        }
+      }
     }
 
     // Add school specific fields
@@ -539,7 +620,11 @@ exports.loginUser = async (req, res) => {
     res.json({
       success: true,
       message: 'Login successful',
-      token,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      token: tokens.accessToken,
+      expiresIn: tokens.expiresIn,
+      refreshExpiresAt: tokens.refreshExpiresAt,
       user: userInfo
     });
 
@@ -626,7 +711,6 @@ exports.updateParentProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Parent not found' });
     }
 
-    // Validate unique fields if they are changing
     if (email && email !== parent.email) {
       const exists = await Parent.findOne({ email, _id: { $ne: parentId } });
       if (exists) return res.status(409).json({ success: false, message: 'Email already in use' });
@@ -647,9 +731,9 @@ exports.updateParentProfile = async (req, res) => {
 
     if (name) parent.name = name;
 
-    // Handle profile picture if uploaded via multer-cloudinary
-    if (req.file) {
-      parent.profilePicture = req.file.path; // Cloudinary gives the URL in path
+    // ✅ multer-s3 provides `req.file.location`
+    if (req.file && req.file.location) {
+      parent.profilePicture = req.file.location;
     }
 
     await parent.save();
@@ -663,12 +747,16 @@ exports.updateParentProfile = async (req, res) => {
         email: parent.email,
         mobile: parent.mobile,
         altMobile: parent.altMobile || null,
-        profilePicture: parent.profilePicture || null
-      }
+        profilePicture: parent.profilePicture || null,
+      },
     });
   } catch (error) {
     console.error('Update parent profile error:', error);
-    return res.status(500).json({ success: false, message: 'Server error while updating profile', error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while updating profile',
+      error: error.message,
+    });
   }
 };
 

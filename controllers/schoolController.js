@@ -9,6 +9,8 @@ const cloudinary = require('cloudinary').v2;
 const bcrypt = require('bcryptjs');
 const DeliveryBoy = require('../models/DeliveryBoy');
 const Order = require('../models/Order');
+// const { verifyOTP } = require('../middleware/otpService');
+const { sendOTP, verifyOTP } = require('../middleware/otpService');
 
 // Helper function to get coordinates from address using OpenStreetMap Nominatim
 const getCoordinates = async (areaName, pincode, cityName) => {
@@ -155,7 +157,7 @@ const calculateDistance = async (address1, address2) => {
 // Generate unique school ID with DELI prefix
 const generateSchoolUniqueId = async () => {
   // Try random 4-digit numbers to avoid sequential guessing
-  const prefix = 'DELI';
+  const prefix = 'MDYB';
   for (let attempts = 0; attempts < 10; attempts++) {
     const num = Math.floor(1000 + Math.random() * 9000); // 1000-9999
     const candidate = `${prefix}${num}`;
@@ -165,7 +167,55 @@ const generateSchoolUniqueId = async () => {
   // Fallback to timestamp-based
   return `${prefix}${Date.now().toString().slice(-4)}`;
 };
+const checkDuplicateAcrossAllUsers = async ({ mobile, altMobile, email }) => {
+  // Check mobile
+  if (mobile) {
+    const mobileExists =
+      (await Parent.findOne({ mobile })) ||
+      (await DeliveryBoy.findOne({ mobile })) ||
+      (await SchoolRegistration.findOne({ mobile }));
+      console.log(mobileExists,'mobileExists');
+      
+    if (mobileExists) return 'Mobile number already registered';
+  }
 
+  // Check altMobile
+
+
+  // Check email
+  if (email) {
+    const emailExists =
+      (await Parent.findOne({ email })) ||
+      (await DeliveryBoy.findOne({ email })) ||
+      (await SchoolRegistration.findOne({ email }));
+    if (emailExists) return 'Email already registered';
+  }
+
+  return null; // No duplicates
+};
+exports.schoolSendOtpController = async (req, res) => {
+  const { mobile,altMobile, purpose,email } = req.body;
+  console.log(mobile,altMobile, purpose,email );
+  
+  if (!mobile) return res.status(400).json({ success: false, message: "Phone is required" });
+const duplicateMessage = await checkDuplicateAcrossAllUsers({ mobile, altMobile, email });
+if (duplicateMessage) {
+  return res.status(409).json({
+    success: false,
+    message: duplicateMessage
+  });
+}else{
+  if(purpose==="forgot_password"){
+    const result = await sendOTP(mobile, purpose || "forgot_password");
+    return res.status(result.success ? 200 : 500).json(result);
+  }else{
+    const result = await sendOTP(mobile, purpose || "register");
+    return res.status(result.success ? 200 : 500).json(result);
+  }
+}
+  // const result = await sendOTP(mobile, purpose || "register");
+  // return res.status(result.success ? 200 : 500).json(result);
+};
 // Public: Register school
 exports.registerSchool = async (req, res) => {
   try {
@@ -178,24 +228,26 @@ exports.registerSchool = async (req, res) => {
       schoolName,
       recogniseId,
       branchNumber,
-      address
+      address,otp
     } = req.body;
-
+const aadharFrontFile = req.files?.aadharFront?.[0];
+    const aadharBackFile = req.files?.aadharBack?.[0];
+    const schoolIdImageFile = req.files?.schoolIdImage?.[0];
     // Files: aadharFront, aadharBack, schoolIdImage
-    let aadharFrontFile = null;
-    let aadharBackFile = null;
-    let schoolIdImageFile = null;
-    if (req.files && !Array.isArray(req.files)) {
-      aadharFrontFile = (req.files['aadharFront'] && req.files['aadharFront'][0]) || null;
-      aadharBackFile = (req.files['aadharBack'] && req.files['aadharBack'][0]) || null;
-      schoolIdImageFile = (req.files['schoolIdImage'] && req.files['schoolIdImage'][0]) || null;
-    } else {
-      const filesArr = Array.isArray(req.files) ? req.files : [];
-      aadharFrontFile = filesArr.find(f => f.fieldname === 'aadharFront') || null;
-      aadharBackFile = filesArr.find(f => f.fieldname === 'aadharBack') || null;
-      schoolIdImageFile = filesArr.find(f => f.fieldname === 'schoolIdImage') || null;
-    }
-
+    // let aadharFrontFile = null;
+    // let aadharBackFile = null;
+    // let schoolIdImageFile = null;
+    // if (req.files && !Array.isArray(req.files)) {
+    //   aadharFrontFile = (req.files['aadharFront'] && req.files['aadharFront'][0]) || null;
+    //   aadharBackFile = (req.files['aadharBack'] && req.files['aadharBack'][0]) || null;
+    //   schoolIdImageFile = (req.files['schoolIdImage'] && req.files['schoolIdImage'][0]) || null;
+    // } else {
+    //   const filesArr = Array.isArray(req.files) ? req.files : [];
+    //   aadharFrontFile = filesArr.find(f => f.fieldname === 'aadharFront') || null;
+    //   aadharBackFile = filesArr.find(f => f.fieldname === 'aadharBack') || null;
+    //   schoolIdImageFile = filesArr.find(f => f.fieldname === 'schoolIdImage') || null;
+    // }
+   
     // Basic validation
     const missing = [];
     if (!contactName) missing.push('contactName');
@@ -215,8 +267,8 @@ exports.registerSchool = async (req, res) => {
     }
 
     // Validate password strength (basic)
-    if (password && password.length < 6) {
-      return res.status(400).json({ success: false, message: 'password must be at least 6 characters' });
+    if (password && password.length < 4) {
+      return res.status(400).json({ success: false, message: 'password must be at least 4 characters' });
     }
 
     if (!/^\d{10}$/.test(mobile)) {
@@ -245,9 +297,9 @@ exports.registerSchool = async (req, res) => {
     }
 
     // Upload files already handled by multer-cloudinary, URLs present at file.path
-    const aadharFrontUrl = aadharFrontFile.path;
-    const aadharBackUrl = aadharBackFile.path;
-    const schoolIdImageUrl = schoolIdImageFile.path;
+    const aadharFrontUrl = aadharFrontFile.location;
+    const aadharBackUrl = aadharBackFile.location;
+    const schoolIdImageUrl = schoolIdImageFile.location;
 
     // Check for existing email
     // const existingSchool = await SchoolRegistration.findOne({ email });
@@ -281,7 +333,13 @@ exports.registerSchool = async (req, res) => {
         message: 'Mobile number already registered'
       });
     }
-
+const otpResult = await verifyOTP(mobile, otp, "register");
+    if (!otpResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: otpResult.message
+      });
+    }
     const schoolUniqueId = await generateSchoolUniqueId();
 
     // Hash password
@@ -300,7 +358,9 @@ exports.registerSchool = async (req, res) => {
       branchNumber,
       address: { houseNo, apartmentName, areaName, landmark, city, pincode },
       schoolIdImageUrl,
-      schoolUniqueId
+      schoolUniqueId,
+      upiId: null,
+      bankDetails: null
     });
 
     await registration.save();
@@ -580,7 +640,7 @@ exports.getSchoolById = async (req, res) => {
 // Update school
 exports.updateSchool = async (req, res) => {
   try {
-    const schoolId = req.params.schoolId;
+    const schoolId = req.user.id; // From JWT token
     const {
       schoolName,
       recognisedNumber,
@@ -597,7 +657,7 @@ exports.updateSchool = async (req, res) => {
     } = req.body;
 
     // Check if school exists
-    const school = await School.findById(schoolId);
+    const school = await SchoolRegistration.findById(schoolId);
     if (!school) {
       return res.status(404).json({
         success: false,
@@ -607,7 +667,7 @@ exports.updateSchool = async (req, res) => {
 
     // Check if recognised number is being changed and if it already exists
     if (recognisedNumber && recognisedNumber !== school.recognisedNumber) {
-      const existingSchool = await School.findOne({ 
+      const existingSchool = await SchoolRegistration.findOne({ 
         recognisedNumber, 
         _id: { $ne: schoolId } 
       });
@@ -641,10 +701,12 @@ exports.updateSchool = async (req, res) => {
     if (contactNumber) updateData.contactNumber = contactNumber;
     if (email !== undefined) updateData.email = email;
     if (typeof isActive === 'boolean') updateData.isActive = isActive;
-
-    const updatedSchool = await School.findByIdAndUpdate(
+ if (req.file && req.file.location) {
+      updateData.profilePicture = req.file.location; // ✅ correct field for saving in DB
+    }
+   const updatedSchool = await SchoolRegistration.findByIdAndUpdate(
       schoolId,
-      updateData,
+      { $set: updateData },
       { new: true }
     );
 
@@ -1097,97 +1159,50 @@ exports.updateDeliveryBoyApprovalStatus = async (req, res) => {
 exports.updateSchoolRegistrationProfile = async (req, res) => {
   try {
     const schoolRegistrationId = req.user.id;
-    const { contactName, mobile, email, schoolName, recogniseId, branchNumber, address } = req.body;
+    const { contactName, mobile, email, schoolName, recogniseId, branchNumber, address, upiId, bankDetails } = req.body;
 
-    // Fetch the school registration
     const schoolRegistration = await SchoolRegistration.findById(schoolRegistrationId);
     if (!schoolRegistration) {
-      return res.status(404).json({
-        success: false,
-        message: 'School registration not found'
-      });
+      return res.status(404).json({ success: false, message: 'School registration not found' });
     }
 
-    // Handle profile picture upload
-    let profilePictureUrl = null;
-    if (req.file) {
-      // Cloudinary returns the URL in req.file.path
-      profilePictureUrl = req.file.path;
-
-      // Delete old profile picture from Cloudinary if it exists
-      if (schoolRegistration.profilePicture) {
-        try {
-          // Extract public_id from the old URL
-          const oldUrlParts = schoolRegistration.profilePicture.split('/');
-          const oldPublicId = oldUrlParts[oldUrlParts.length - 1].split('.')[0];
-
-          // Delete from Cloudinary
-          await cloudinary.uploader.destroy(oldPublicId);
-          console.log('Old profile picture deleted from Cloudinary');
-        } catch (error) {
-          console.error('Error deleting old profile picture:', error);
-          // Continue with the update even if deletion fails
-        }
-      }
+    // ✅ Handle profile picture from AWS S3
+    if (req.file && req.file.location) {
+      // Delete old image logic (optional — requires AWS deleteObject)
+      schoolRegistration.profilePicture = req.file.location;
     }
 
-    // Update allowed fields
+    // ✅ Update other fields
     if (contactName) schoolRegistration.contactName = contactName;
     if (schoolName) schoolRegistration.schoolName = schoolName;
     if (recogniseId) {
-      // Check if recogniseId is already taken by another school
       const existingSchool = await SchoolRegistration.findOne({
-        recogniseId: recogniseId,
-        _id: { $ne: schoolRegistrationId }
+        recogniseId,
+        _id: { $ne: schoolRegistrationId },
       });
-
       if (existingSchool) {
-        return res.status(400).json({
-          success: false,
-          message: 'Recognise ID is already registered with another school'
-        });
+        return res.status(400).json({ success: false, message: 'Recognise ID already exists' });
       }
-
       schoolRegistration.recogniseId = recogniseId;
     }
-    if (branchNumber !== undefined) schoolRegistration.branchNumber = branchNumber; // Allow empty string
-    if (profilePictureUrl) schoolRegistration.profilePicture = profilePictureUrl;
+    if (branchNumber !== undefined) schoolRegistration.branchNumber = branchNumber;
 
     if (mobile) {
-      // Check if mobile number is already taken by another school
-      const existingSchool = await SchoolRegistration.findOne({
-        mobile: mobile,
-        _id: { $ne: schoolRegistrationId }
-      });
-
+      const existingSchool = await SchoolRegistration.findOne({ mobile, _id: { $ne: schoolRegistrationId } });
       if (existingSchool) {
-        return res.status(400).json({
-          success: false,
-          message: 'Mobile number is already registered with another school'
-        });
+        return res.status(400).json({ success: false, message: 'Mobile already exists' });
       }
-
       schoolRegistration.mobile = mobile;
     }
 
     if (email) {
-      // Check if email is already taken by another school
-      const existingSchool = await SchoolRegistration.findOne({
-        email: email,
-        _id: { $ne: schoolRegistrationId }
-      });
-
+      const existingSchool = await SchoolRegistration.findOne({ email, _id: { $ne: schoolRegistrationId } });
       if (existingSchool) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email is already registered with another school'
-        });
+        return res.status(400).json({ success: false, message: 'Email already exists' });
       }
-
       schoolRegistration.email = email;
     }
 
-    // Update address fields if provided
     if (address) {
       if (address.houseNo) schoolRegistration.address.houseNo = address.houseNo;
       if (address.apartmentName !== undefined) schoolRegistration.address.apartmentName = address.apartmentName;
@@ -1196,12 +1211,25 @@ exports.updateSchoolRegistrationProfile = async (req, res) => {
       if (address.city) schoolRegistration.address.city = address.city;
       if (address.pincode) {
         if (!/^\d{6}$/.test(address.pincode)) {
-          return res.status(400).json({
-            success: false,
-            message: 'Pincode must be 6 digits'
-          });
+          return res.status(400).json({ success: false, message: 'Pincode must be 6 digits' });
         }
         schoolRegistration.address.pincode = address.pincode;
+      }
+    }
+
+    if (upiId !== undefined) {
+      schoolRegistration.upiId = upiId;
+      if (upiId) {
+        schoolRegistration.bankDetails = null;
+      }
+    }
+
+    if (bankDetails !== undefined) {
+      if (bankDetails) {
+        schoolRegistration.bankDetails = bankDetails;
+        schoolRegistration.upiId = null;
+      } else {
+        schoolRegistration.bankDetails = null;
       }
     }
 
@@ -1210,19 +1238,7 @@ exports.updateSchoolRegistrationProfile = async (req, res) => {
     res.json({
       success: true,
       message: 'School registration profile updated successfully',
-      schoolRegistration: {
-        id: schoolRegistration._id,
-        contactName: schoolRegistration.contactName,
-        mobile: schoolRegistration.mobile,
-        email: schoolRegistration.email,
-        schoolName: schoolRegistration.schoolName,
-        recogniseId: schoolRegistration.recogniseId,
-        branchNumber: schoolRegistration.branchNumber,
-        address: schoolRegistration.address,
-        profilePicture: schoolRegistration.profilePicture,
-        schoolUniqueId: schoolRegistration.schoolUniqueId,
-        status: schoolRegistration.status
-      }
+      schoolRegistration,
     });
 
   } catch (error) {
@@ -1230,7 +1246,102 @@ exports.updateSchoolRegistrationProfile = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while updating profile',
-      error: error.message
+      error: error.message,
+    });
+  }
+};
+
+exports.updateSchoolPaymentDetails = async (req, res) => {
+  try {
+    const schoolRegistrationId = req.user.id;
+    let { upiId, bankDetails, razorpayLinkedAccountId } = req.body;
+    const documentImageFile = req.file;
+
+    // 🔥 FIX: Parse bankDetails if it's a JSON string
+    if (bankDetails && typeof bankDetails === "string") {
+      bankDetails = JSON.parse(bankDetails);
+    }
+
+    const schoolRegistration = await SchoolRegistration.findById(schoolRegistrationId);
+    if (!schoolRegistration) {
+      return res.status(404).json({ success: false, message: 'School registration not found' });
+    }
+
+    // Validate that either UPI ID, bank details, or razorpayLinkedAccountId are provided
+    if (!upiId && !bankDetails && razorpayLinkedAccountId === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Either UPI ID, bank details, or razorpayLinkedAccountId must be provided'
+      });
+    }
+
+    if (upiId) {
+      schoolRegistration.upiId = upiId;
+      schoolRegistration.bankDetails = null;
+    }
+
+    if (bankDetails) {
+      const { bankName, ifscCode, accountHolderName, accountNumber } = bankDetails;
+
+      if (!bankName || !ifscCode || !accountHolderName || !accountNumber) {
+        return res.status(400).json({
+          success: false,
+          message: 'All bank details fields (bankName, ifscCode, accountHolderName, accountNumber) are required'
+        });
+      }
+
+      if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid IFSC code format'
+        });
+      }
+
+      if (!/^\d{9,18}$/.test(accountNumber)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Account number should be 9-18 digits'
+        });
+      }
+
+      const documentImageUrl = documentImageFile ? documentImageFile.location : null;
+
+      schoolRegistration.upiId = null;
+      schoolRegistration.bankDetails = {
+        bankName,
+        ifscCode: ifscCode.toUpperCase(),
+        accountHolderName,
+        accountNumber,
+        documentImageUrl
+      };
+    }
+
+    if (razorpayLinkedAccountId !== undefined) {
+      const v = typeof razorpayLinkedAccountId === 'string' ? razorpayLinkedAccountId.trim() : '';
+      schoolRegistration.razorpayLinkedAccountId = v || null;
+    }
+
+    await schoolRegistration.save();
+
+    const paymentDetails = {
+      upiId: schoolRegistration.upiId,
+      bankDetails: schoolRegistration.bankDetails
+    };
+    if (schoolRegistration.razorpayLinkedAccountId) {
+      paymentDetails.razorpayLinkedAccountId = schoolRegistration.razorpayLinkedAccountId;
+    }
+
+    res.json({
+      success: true,
+      message: 'Payment details updated successfully',
+      paymentDetails
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating payment details',
+      error: error.message,
     });
   }
 };

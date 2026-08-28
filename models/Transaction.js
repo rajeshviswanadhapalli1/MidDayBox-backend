@@ -4,12 +4,27 @@ const transactionSchema = new mongoose.Schema({
   orderId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Order',
-    required: true
+    required: false // Made optional for UPI transfers
   },
   parentId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Parent',
-    required: true
+    required: false // Made optional for UPI transfers
+  },
+  schoolId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SchoolRegistration',
+    required: false // For school payments
+  },
+  orderIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order',
+    required: false // For bulk payments to schools covering multiple orders
+  }],
+  paymentType: {
+    type: String,
+    enum: ['parent_payment', 'school_payment', 'manual_transfer'],
+    default: 'parent_payment'
   },
   amount: {
     type: Number,
@@ -67,6 +82,31 @@ const transactionSchema = new mongoose.Schema({
   refundedAt: {
     type: Date,
     required: false
+  },
+  // UPI transfer fields for manual admin entries
+  upiRecipientName: {
+    type: String,
+    required: false
+  },
+  upiRecipientId: {
+    type: String,
+    required: false
+  },
+  upiTransactionId: {
+    type: String,
+    required: false
+  },
+  bankReference: {
+    type: String,
+    required: false
+  },
+  razorpayTransferId: {
+    type: String,
+    required: false
+  },
+  razorpayPayoutId: {
+    type: String,
+    required: false
   }
 }, {
   timestamps: true
@@ -77,5 +117,7 @@ transactionSchema.index({ orderId: 1 });
 transactionSchema.index({ razorpayOrderId: 1 });
 transactionSchema.index({ razorpayPaymentId: 1 });
 transactionSchema.index({ status: 1 });
+transactionSchema.index({ paymentType: 1, status: 1 });
+transactionSchema.index({ schoolId: 1, status: 1 });
 
 module.exports = mongoose.model('Transaction', transactionSchema);

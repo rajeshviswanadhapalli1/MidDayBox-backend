@@ -6,6 +6,12 @@ const School = require('../models/School');
 const SchoolRegistration = require('../models/SchoolRegistration');
 const DeliveryBoy = require('../models/DeliveryBoy');
 const Razorpay = require('razorpay');
+const {
+  buildDeliverySchedule,
+  enrichOrder,
+  enrichOrders,
+  isSunday
+} = require('../utils/orderSchedule');
 
 const toObjectId = value => {
   if (!value) return null;
@@ -130,17 +136,27 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    // Calculate end date based on order type
     const start = new Date(startDate);
-    const endDate = new Date(start);
-    if(orderType === 'today'){
-      endDate.setDate(endDate.getDate());
-    }else{
-      endDate.setDate(start.getDate() + (orderType === '15_days' ? 15 : 30));
+
+    if (orderType === 'today' && isSunday(start)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Sunday is not a delivery day. Please choose Monday–Saturday.'
+      });
+    }
+
+    const schedule = buildDeliverySchedule({ startDate: start, orderType });
+    if (!schedule.ok) {
+      return res.status(400).json({
+        success: false,
+        message: schedule.error
+      });
     }
 
     // Calculate distance charge (example: ₹5 per km per day)
     const distanceChargePerDay = Math.max(0, (distance - 5) * 5);
+    const dailyRate = Number(basePrice) + distanceChargePerDay;
+    const totalAmount = Math.round(dailyRate * schedule.totalDeliveryDays * 100) / 100;
 
     // Prepare order data for storage
     const orderData = {
@@ -149,20 +165,20 @@ exports.createOrder = async (req, res) => {
       schoolRegistrationId,
       schoolUniqueId,
       orderType,
-      startDate: start,
-      endDate,
+      startDate: schedule.startDate,
+      endDate: schedule.endDate,
       deliveryTime,
       noOfBoxes: Number(noOfBoxes) || 1,
       distance,
       basePrice,
       distanceCharge: distanceChargePerDay,
-      totalAmount: basePrice,
+      totalAmount,
       specialInstructions,
       dietaryRestrictions,
       lunchBoxType: lunchBoxType || 'standard'
     };
 
-    const amount = Math.round(basePrice * 100);
+    const amount = Math.round(totalAmount * 100);
 
    
     const razorpay = new Razorpay({
@@ -187,7 +203,7 @@ exports.createOrder = async (req, res) => {
       parentId,
       razorpayOrderId: razorpayOrder.id,
       orderData,
-      amount: basePrice,
+      amount: totalAmount,
       currency: 'INR',
       status: 'pending'
     });
@@ -200,10 +216,15 @@ exports.createOrder = async (req, res) => {
       data: {
         paymentOrderId: paymentOrder._id,
         razorpayOrderId: razorpayOrder.id,
-        amount: basePrice,
+        amount: totalAmount,
         currency: 'INR',
         keyId: process.env.RAZORPAY_KEY_ID,
-        orderDetails: orderData
+        orderDetails: {
+          ...orderData,
+          requestedCalendarDays: schedule.requestedCalendarDays,
+          totalDeliveryDays: schedule.totalDeliveryDays,
+          sundaysExcluded: schedule.sundaysExcluded
+        }
       }
     });
 
@@ -241,7 +262,7 @@ exports.getParentOrders = async (req, res) => {
 
     res.json({
       success: true,
-      orders,
+      orders: enrichOrders(orders),
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / parseInt(limit)),
@@ -283,7 +304,7 @@ exports.getOrderById = async (req, res) => {
 
     res.json({
       success: true,
-      order
+      order: enrichOrder(order)
     });
 
   } catch (error) {
@@ -330,7 +351,7 @@ exports.getAllOrders = async (req, res) => {
     if (pincode || recognisedNumber || branchNumber) {
       orders = orders.filter(order => {
         const parentAddress = order.parentAddressId;
-        const school = order.schoolId;
+        const school = order.schoolRegistrationId;
         
         let matches = true;
         
@@ -368,7 +389,7 @@ exports.getAllOrders = async (req, res) => {
 
     res.json({
       success: true,
-      orders,
+      orders: enrichOrders(orders),
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / parseInt(limit)),
@@ -409,7 +430,7 @@ exports.getOrderDetails = async (req, res) => {
 
     res.json({
       success: true,
-      order
+      order: enrichOrder(order)
     });
 
   } catch (error) {
@@ -574,11 +595,33 @@ exports.updateDailyDelivery = async (req, res) => {
 
     await order.save();
 
-    res.json({
+    // When last delivery is marked 'delivered', mark order completed
+    const allDelivered = order.dailyDeliveries.length > 0 &&
+      order.dailyDeliveries.every(d => d.status === 'delivered');
+
+    let orderCompleted = false;
+    if (allDelivered && status === 'delivered') {
+      order.status = 'completed';
+      order.trackingHistory.push({
+        action: 'order_completed',
+        timestamp: new Date(),
+        performedBy: deliveryBoyId,
+        notes: 'All deliveries completed. Order marked completed.'
+      });
+      await order.save();
+      orderCompleted = true;
+    }
+
+    const response = {
       success: true,
       message: 'Daily delivery status updated successfully',
       dailyDelivery
-    });
+    };
+    if (orderCompleted) {
+      response.orderCompleted = true;
+      response.payForSchool = order.payForSchool;
+    }
+    res.json(response);
 
   } catch (error) {
     console.error('Update daily delivery error:', error);
@@ -809,7 +852,7 @@ console.log(schoolUniqueId,registrationId);
 
     res.json({
       success: true,
-      orders,
+      orders: enrichOrders(orders),
       assignedOrdersCount: summary.assignedOrdersCount,
       unAssignedOrdersCount: summary.unAssignedOrdersCount,
       pagination: {
@@ -873,6 +916,238 @@ exports.getSchoolOrderCounts = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve order counts. Please try again later.',
+      error: error.message
+    });
+  }
+};
+
+// Get school orders list with date filter and order type (active/completed) with pagination
+exports.getSchoolOrdersList = async (req, res) => {
+  try {
+    const { date, type = 'active', page = 1, limit = 10 } = req.query;
+
+    // Validate required fields
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Date parameter is required (format: YYYY-MM-DD)'
+      });
+    }
+
+    if (!['active', 'completed'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type must be either "active" or "completed"'
+      });
+    }
+
+    // Parse and normalize the date
+    const selectedDate = new Date(date);
+    if (isNaN(selectedDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Use YYYY-MM-DD'
+      });
+    }
+    selectedDate.setHours(0, 0, 0, 0);
+    const nextDay = new Date(selectedDate);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    // Get school information from authenticated user
+    const schoolRegistration = await SchoolRegistration.findById(req.user.id);
+    if (!schoolRegistration) {
+      return res.status(404).json({
+        success: false,
+        message: 'School registration not found'
+      });
+    }
+
+    const schoolUniqueId = schoolRegistration.schoolUniqueId;
+    const schoolRegistrationId = schoolRegistration._id;
+
+    // Helper function to check if all deliveries up to selected date are delivered
+    const areAllDeliveriesCompleted = (order, upToDate) => {
+      // Get all deliveries from start date up to and including the selected date
+      const deliveriesUpToDate = order.dailyDeliveries.filter(delivery => {
+        const deliveryDate = new Date(delivery.date);
+        deliveryDate.setHours(0, 0, 0, 0);
+        return deliveryDate <= upToDate;
+      });
+
+      // If no deliveries up to this date, return false
+      if (deliveriesUpToDate.length === 0) return false;
+
+      // Check if ALL deliveries up to this date are delivered
+      return deliveriesUpToDate.every(delivery => delivery.status === 'delivered');
+    };
+
+    // Helper function to check if order has a delivery ON the exact selected date
+    const hasDeliveryOnDate = (order, targetDate) => {
+      return order.dailyDeliveries.some(delivery => {
+        const deliveryDate = new Date(delivery.date);
+        deliveryDate.setHours(0, 0, 0, 0);
+        return deliveryDate.getTime() === targetDate.getTime();
+      });
+    };
+
+    // Helper function to get delivery on a specific date
+    const getDeliveryOnDate = (order, targetDate) => {
+      return order.dailyDeliveries.find(delivery => {
+        const deliveryDate = new Date(delivery.date);
+        deliveryDate.setHours(0, 0, 0, 0);
+        return deliveryDate.getTime() === targetDate.getTime();
+      });
+    };
+
+    // Base filter for school - fetch orders that have a delivery on the selected date
+    const baseFilter = {
+      $or: [
+        { schoolUniqueId: schoolUniqueId },
+        { schoolRegistrationId: toObjectId(schoolRegistrationId) }
+      ],
+      // Filter orders that have a delivery on the exact selected date
+      'dailyDeliveries.date': {
+        $gte: selectedDate,
+        $lt: nextDay
+      }
+    };
+
+    // Fetch orders for this school that have deliveries on the selected date
+    let allOrders = await Order.find(baseFilter)
+      .populate('parentId', 'name email mobile altMobile')
+      .populate('parentAddressId')
+      .populate('schoolId', 'schoolName recognisedNumber branchNumber')
+      .populate('schoolRegistrationId', 'schoolName schoolUniqueId contactName mobile email address')
+      .populate('deliveryBoyId', 'name mobile vehicleType vehicleNo')
+      .sort({ createdAt: -1 });
+
+    // Filter orders based on completion status - MUST have delivery ON the selected date
+    let filteredOrders = allOrders.filter(order => {
+      // Must have a delivery ON the exact selected date (not before or after)
+      if (!hasDeliveryOnDate(order, selectedDate)) {
+        return false;
+      }
+
+      // Get the delivery on the selected date
+      const deliveryOnDate = getDeliveryOnDate(order, selectedDate);
+
+      if (type === 'active') {
+        // Active: order status is active AND not all deliveries up to selected date are completed
+        // Exclude if the delivery on selected date is cancelled (but include if it's pending/picked_up/skipped/delivered as long as order is still active and not fully completed)
+        if (order.status !== 'active') {
+          return false;
+        }
+        
+        // Exclude if delivery on selected date is cancelled
+        if (deliveryOnDate && deliveryOnDate.status === 'cancelled') {
+          return false;
+        }
+        
+        // Exclude if all deliveries up to selected date are completed
+        if (areAllDeliveriesCompleted(order, selectedDate)) {
+          return false;
+        }
+        
+        // Order is active and has delivery on this date (not cancelled and not fully completed)
+        return true;
+      } else if (type === 'completed') {
+        // Completed: ALL deliveries from start date up to selected date are delivered
+        return areAllDeliveriesCompleted(order, selectedDate);
+      }
+
+      return false;
+    });
+
+    // Apply pagination to filtered results
+    const total = filteredOrders.length;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const paginatedOrders = filteredOrders.slice(skip, skip + parseInt(limit));
+
+    // Format orders to include delivery info for the selected date
+    const formattedOrders = paginatedOrders.map(order => {
+      // Get delivery on the exact selected date (it must exist since we filtered for it)
+      const deliveryOnSelectedDate = getDeliveryOnDate(order, selectedDate);
+
+      // Get all deliveries up to and including the selected date for progress calculation
+      const deliveriesUpToDate = order.dailyDeliveries.filter(delivery => {
+        const deliveryDate = new Date(delivery.date);
+        deliveryDate.setHours(0, 0, 0, 0);
+        return deliveryDate <= selectedDate;
+      });
+
+      // Count delivered vs total deliveries up to selected date
+      const totalDeliveriesUpToDate = deliveriesUpToDate.length;
+      const deliveredCount = deliveriesUpToDate.filter(d => d.status === 'delivered').length;
+
+      return enrichOrder({
+        ...order.toObject(),
+        deliveryOnSelectedDate: deliveryOnSelectedDate || null,
+        deliveryProgress: {
+          delivered: deliveredCount,
+          total: totalDeliveriesUpToDate,
+          isFullyCompleted: areAllDeliveriesCompleted(order, selectedDate)
+        }
+      });
+    });
+
+    // Calculate counts for summary using already fetched orders
+    let activeCount = 0;
+    let completedCount = 0;
+
+    allOrders.forEach(order => {
+      // Must have a delivery ON the exact selected date
+      if (!hasDeliveryOnDate(order, selectedDate)) {
+        return;
+      }
+
+      // Get the delivery on the selected date
+      const deliveryOnDate = getDeliveryOnDate(order, selectedDate);
+
+      // Count active orders (order status is active, delivery exists, not cancelled, and not fully completed)
+      if (order.status === 'active') {
+        // Exclude if delivery on selected date is cancelled
+        if (deliveryOnDate && deliveryOnDate.status === 'cancelled') {
+          // Skip this order for active count
+        } 
+        // Exclude if all deliveries up to selected date are completed
+        else if (areAllDeliveriesCompleted(order, selectedDate)) {
+          // Skip this order for active count (it will be counted as completed)
+        } else {
+          activeCount++;
+        }
+      }
+
+      // Count completed orders (ALL deliveries from start date up to selected date are delivered)
+      if (areAllDeliveriesCompleted(order, selectedDate)) {
+        completedCount++;
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        orders: formattedOrders,
+        summary: {
+          activeOrders: activeCount,
+          completedOrders: completedCount,
+          totalOrders: activeCount + completedCount
+        },
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / parseInt(limit)),
+          totalOrders: total,
+          hasNextPage: skip + formattedOrders.length < total,
+          hasPrevPage: parseInt(page) > 1,
+          limit: parseInt(limit)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get school orders list error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve school orders list. Please try again later.',
       error: error.message
     });
   }

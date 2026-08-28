@@ -15,8 +15,8 @@ cloudinary.config({
 const bodyParser = require('body-parser');
 const cors = require('cors');
 require('dotenv').config();
-// console.log("Razorpay Key ID:", process.env.RAZORPAY_KEY_ID);
-// console.log("Razorpay Key Secret:", process.env.RAZORPAY_KEY_SECRET ? "Loaded ✅" : "Missing ❌");
+console.log("Razorpay Key ID:", process.env.RAZORPAY_KEY_ID);
+console.log("Razorpay Key Secret:", process.env.RAZORPAY_KEY_SECRET ? "Loaded ✅" : "Missing ❌");
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
@@ -39,6 +39,10 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const deliveryBoyRoutes = require('./routes/deliveryBoyRoutes');
 const feedbackRoutes = require('./routes/feedBackRoutes');
+const appRoutes = require('./routes/appRoutes');
+const notificationsRoutes = require('./routes/notificationsRoutes');
+const demoVideoRoutes = require('./routes/demoVideoRoutes');
+const festivalWishRoutes = require('./routes/festivalWishRoutes');
 // Use routes
 app.use('/api/auth', authRoutes);
 app.use('/api/addresses', addressRoutes);
@@ -48,12 +52,16 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/delivery-boy', deliveryBoyRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/app', appRoutes);
+app.use('/api/notifications', notificationsRoutes);
+app.use('/api/demo-videos', demoVideoRoutes);
+app.use('/api/festival-wishes', festivalWishRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ 
     success: true, 
-    message: 'Server is running',
+    message: 'MidDayBox Server is running with Version Code 1.0.7',
     timestamp: new Date().toISOString()
   });
 });

@@ -1,16 +1,17 @@
 const axios = require("axios");
-const qs = require("qs");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
 const Otp = require("../models/otp");
 
 dotenv.config();
 
-const SMS_API_URL = "https://bhashsms.com/api/sendmsg.php";
+const SMS_API_URL = process.env.SMS_API_URL || "http://web.smsgw.in/smsapi/httpapi.jsp";
 
 const generateOTP = () => crypto.randomInt(100000, 999999).toString();
 
 const sendOTP = async (mobile, purpose = "register") => {
+  console.log(`📲 Sending OTP to ${mobile} for ${purpose}`);
+  
   try {
     // 🔹 Step 1: Check if a recent OTP exists (within 2 minutes)
     let existing = await Otp.findOne({
@@ -36,23 +37,23 @@ const sendOTP = async (mobile, purpose = "register") => {
     // 🔹 Step 3: Prepare message
     const message =
       purpose === "register"
-        ? `Your MidDayBox verification code is ${otp}.`
-        : `Your MidDayBox password reset code is ${otp}.`;
+        ? `Hi, use OTP ${otp} to verify your MidDayBox account. This code will expire in 5 minutes. Do not share this code with anyone. MidDayBox Support`
+        : `MidDayBox Reset OTP: ${otp}. Valid for 5 min. Do not share this code with anyone. MidDayBox Support`;
 
-    // 🔹 Step 4: Send SMS only once
+    // 🔹 Step 4: Send SMS
     const params = {
-      user: process.env.SMS_USER,
-      pass: process.env.SMS_PASS,
-      sender: process.env.SMS_SENDER,
-      phone: mobile,
+      username: process.env.SMS_USER,
+      password: process.env.SMS_PASS,
+      from: process.env.SMS_SENDER,
+      to: mobile,
       text: message,
-      priority: "ndnd",
-      stype: "normal",
+      coding: 0,
+      pe_id: process.env.SMS_PE_ID,
+      template_id: purpose === "register" ? process.env.SMS_TEMPLATE_ID : '1707176312205337571'
     };
 
-    const response = await axios.post(SMS_API_URL, qs.stringify(params), {
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    });
+    const queryString = new URLSearchParams(params).toString();
+    const response = await axios.get(`${SMS_API_URL}?${queryString}`);
 
     console.log("✅ OTP Sent:", response.data);
     return { success: true, message: "OTP sent successfully" };
@@ -65,6 +66,9 @@ const sendOTP = async (mobile, purpose = "register") => {
 const verifyOTP = async (mobile, otp, purpose = "register") => {
   try {
     const record = await Otp.findOne({ mobile, purpose });
+    console.log(record,'record');
+    console.log(otp,'otp');
+    
     if (!record) return { success: false, message: "OTP not found or expired" };
     if (record.otp !== otp) return { success: false, message: "Invalid OTP" };
 

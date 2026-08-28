@@ -5,12 +5,12 @@ const Order = require('../models/Order');
 const School = require('../models/School');
 const ParentAddress = require('../models/ParentAddress');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const { issueTokenPair } = require('../utils/tokenService');
 const Pricing = require('../models/Pricing');
 const SchoolRegistration = require('../models/SchoolRegistration');
-
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwtkey';
+const { sendSchoolApprovedNotification } = require('../services/fcmService');
+const { enrichOrder, enrichOrders } = require('../utils/orderSchedule');
 
 // Initialize admin credentials (hardcoded)
 const initializeAdmin = async () => {
@@ -64,21 +64,27 @@ exports.adminLogin = async (req, res) => {
       });
     }
 
-    const token = jwt.sign(
-      { id: admin._id, role: 'admin' },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const tokens = await issueTokenPair({
+      userId: admin._id,
+      role: admin.role || 'admin',
+      req
+    });
 
     res.json({
       success: true,
-      message: 'Admin login successful',
-      token,
+      message: 'Login successful',
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      token: tokens.accessToken,
+      expiresIn: tokens.expiresIn,
+      refreshExpiresAt: tokens.refreshExpiresAt,
       user: {
         id: admin._id,
         name: admin.name,
         email: admin.email,
-        role: admin.role
+        mobile: admin.mobile,
+        role: admin.role,
+        permissions: admin.role === 'sub_admin' ? (admin.permissions || []) : undefined
       }
     });
 
@@ -89,6 +95,199 @@ exports.adminLogin = async (req, res) => {
       message: 'Server error during login',
       error: error.message
     });
+  }
+};
+
+const SUB_ADMIN_PERMISSION_KEYS = [
+  'dashboard',
+  'users',
+  'orders',
+  'prices',
+  'schools',
+  'transactions',
+  'sub_admins',
+  'feedbacks'
+];
+
+const normalizePermissions = (permissions) => {
+  const arr = Array.isArray(permissions) ? permissions : [];
+  const norm = arr
+    .map((p) => String(p).trim().toLowerCase())
+    .filter(Boolean);
+  return Array.from(new Set(norm.filter((p) => SUB_ADMIN_PERMISSION_KEYS.includes(p))));
+};
+
+// Add Sub Admin (admin only)
+exports.createSubAdmin = async (req, res) => {
+  try {
+    const { name, email, mobile, password, permissions } = req.body;
+
+    if (!name || !email || !mobile || !password) {
+      return res.status(400).json({ success: false, message: 'name, email, mobile, password are required' });
+    }
+
+    const existing = await Admin.findOne({ $or: [{ email }, { mobile }] });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Admin with this email/mobile already exists' });
+    }
+
+    const perms = normalizePermissions(permissions);
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+
+    const subAdmin = new Admin({
+      name: String(name).trim(),
+      email: String(email).trim().toLowerCase(),
+      mobile: String(mobile).trim(),
+      password: hashedPassword,
+      role: 'sub_admin',
+      permissions: perms,
+      createdBy: req.user?.id || null
+    });
+
+    await subAdmin.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Sub admin created successfully',
+      subAdmin: {
+        id: subAdmin._id,
+        name: subAdmin.name,
+        email: subAdmin.email,
+        mobile: subAdmin.mobile,
+        role: subAdmin.role,
+        permissions: subAdmin.permissions,
+        isActive: subAdmin.isActive,
+        createdAt: subAdmin.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create sub admin error:', error);
+    res.status(500).json({ success: false, message: 'Server error while creating sub admin', error: error.message });
+  }
+};
+
+// Get all Sub Admins (admin only)
+exports.getSubAdmins = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const filter = { role: 'sub_admin' };
+    if (search) {
+      const regex = new RegExp(String(search), 'i');
+      filter.$or = [{ name: regex }, { email: regex }, { mobile: regex }];
+    }
+
+    const [items, total] = await Promise.all([
+      Admin.find(filter)
+        .select('name email mobile role permissions isActive createdAt updatedAt createdBy')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum),
+      Admin.countDocuments(filter)
+    ]);
+
+    res.json({
+      success: true,
+      subAdmins: items,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(total / limitNum),
+        total,
+        hasNextPage: skip + items.length < total,
+        hasPrevPage: pageNum > 1
+      }
+    });
+  } catch (error) {
+    console.error('Get sub admins error:', error);
+    res.status(500).json({ success: false, message: 'Server error while fetching sub admins', error: error.message });
+  }
+};
+
+// Update Sub Admin (admin/sub_admins permission)
+exports.updateSubAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, mobile, permissions, isActive, password } = req.body || {};
+
+    const subAdmin = await Admin.findOne({ _id: id, role: 'sub_admin' });
+    if (!subAdmin) {
+      return res.status(404).json({ success: false, message: 'Sub admin not found' });
+    }
+
+    if (email && String(email).trim().toLowerCase() !== subAdmin.email) {
+      const existingEmail = await Admin.findOne({ email: String(email).trim().toLowerCase(), _id: { $ne: subAdmin._id } });
+      if (existingEmail) {
+        return res.status(400).json({ success: false, message: 'Email already in use' });
+      }
+      subAdmin.email = String(email).trim().toLowerCase();
+    }
+
+    if (mobile && String(mobile).trim() !== subAdmin.mobile) {
+      const existingMobile = await Admin.findOne({ mobile: String(mobile).trim(), _id: { $ne: subAdmin._id } });
+      if (existingMobile) {
+        return res.status(400).json({ success: false, message: 'Mobile already in use' });
+      }
+      subAdmin.mobile = String(mobile).trim();
+    }
+
+    if (name) subAdmin.name = String(name).trim();
+
+    if (permissions !== undefined) {
+      subAdmin.permissions = normalizePermissions(permissions);
+    }
+
+    if (typeof isActive === 'boolean') {
+      subAdmin.isActive = isActive;
+    }
+
+    if (password) {
+      subAdmin.password = await bcrypt.hash(String(password), 10);
+    }
+
+    await subAdmin.save();
+
+    res.json({
+      success: true,
+      message: 'Sub admin updated successfully',
+      subAdmin: {
+        id: subAdmin._id,
+        name: subAdmin.name,
+        email: subAdmin.email,
+        mobile: subAdmin.mobile,
+        role: subAdmin.role,
+        permissions: subAdmin.permissions,
+        isActive: subAdmin.isActive,
+        updatedAt: subAdmin.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update sub admin error:', error);
+    res.status(500).json({ success: false, message: 'Server error while updating sub admin', error: error.message });
+  }
+};
+
+// Delete Sub Admin (admin/sub_admins permission)
+exports.deleteSubAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const subAdmin = await Admin.findOne({ _id: id, role: 'sub_admin' });
+    if (!subAdmin) {
+      return res.status(404).json({ success: false, message: 'Sub admin not found' });
+    }
+
+    await Admin.deleteOne({ _id: subAdmin._id });
+
+    res.json({
+      success: true,
+      message: 'Sub admin deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete sub admin error:', error);
+    res.status(500).json({ success: false, message: 'Server error while deleting sub admin', error: error.message });
   }
 };
 
@@ -163,14 +362,20 @@ exports.getAllOrders = async (req, res) => {
       limit = 10,
       parentId,
       deliveryBoyId,
+      paymentStatus,
+      orderType,
       startDate,
-      endDate
+      endDate,
+      schoolId
     } = req.query;
 
     const filter = {};
     if (status) filter.status = status;
+    if (schoolId) filter.schoolRegistrationId = schoolId;
     if (parentId) filter.parentId = parentId;
     if (deliveryBoyId) filter.deliveryBoyId = deliveryBoyId;
+    if (paymentStatus) filter.paymentStatus = paymentStatus;
+    if (orderType) filter.orderType = orderType;
     if (startDate && endDate) {
       filter.createdAt = {
         $gte: new Date(startDate),
@@ -183,7 +388,7 @@ exports.getAllOrders = async (req, res) => {
     const orders = await Order.find(filter)
       .populate('parentId', 'name email mobile')
       .populate('parentAddressId', 'parentName studentName areaName cityName')
-      .populate('schoolId', 'schoolName areaName cityName')
+      .populate('schoolRegistrationId', 'schoolName schoolUniqueId contactName mobile email address')
       .populate('deliveryBoyId', 'name mobile vehicleType')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -193,7 +398,7 @@ exports.getAllOrders = async (req, res) => {
 
     res.json({
       success: true,
-      orders,
+      orders: enrichOrders(orders),
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / parseInt(limit)),
@@ -234,7 +439,7 @@ exports.getOrderDetails = async (req, res) => {
 
     res.json({
       success: true,
-      order
+      order: enrichOrder(order)
     });
 
   } catch (error) {
@@ -711,7 +916,7 @@ exports.getPricing = async (req, res) => {
 // Update pricing
 exports.updatePricing = async (req, res) => {
   try {
-    const { tiers, boxPrice, gstPercent, serviceChargePercent } = req.body;
+    const { tiers, boxPrice, gstPercent, serviceChargePercent, schoolPaymentPercent } = req.body;
 
     // Basic validation
     if (!Array.isArray(tiers) || tiers.length === 0) {
@@ -742,12 +947,22 @@ exports.updatePricing = async (req, res) => {
       return res.status(400).json({ success: false, message: 'serviceChargePercent must be a number between 0 and 100' });
     }
 
+    let schoolPaymentPercentVal = 2;
+    if (schoolPaymentPercent !== undefined && schoolPaymentPercent !== null) {
+      const v = Number(schoolPaymentPercent);
+      if (isNaN(v) || v < 0 || v > 100) {
+        return res.status(400).json({ success: false, message: 'schoolPaymentPercent must be a number between 0 and 100' });
+      }
+      schoolPaymentPercentVal = v;
+    }
+
     // Create new pricing version (keeps history)
     const pricing = new Pricing({
       tiers: formattedTiers,
       boxPrice: Number(boxPrice),
       gstPercent: Number(gstPercent),
       serviceChargePercent: Number(serviceChargePercent),
+      schoolPaymentPercent: schoolPaymentPercentVal,
       updatedBy: req.user?.id || null
     });
 
@@ -853,6 +1068,8 @@ exports.updateSchoolRegistrationStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'School registration not found' });
     }
 
+    const previousStatus = registration.status;
+
     registration.status = status;
     if (status === 'rejected') {
       registration.rejectionReason = reason || null;
@@ -866,6 +1083,17 @@ exports.updateSchoolRegistrationStatus = async (req, res) => {
 
     const sanitized = registration.toObject();
     delete sanitized.password;
+
+    // Push notification only on transition: pending -> approved.
+    if (previousStatus === 'pending' && status === 'approved') {
+      sendSchoolApprovedNotification({
+        schoolRegistrationId: registration._id,
+        schoolUniqueId: registration.schoolUniqueId
+      }).catch((e) => {
+        // Never block admin workflow due to FCM issues.
+        console.error('FCM school approved notification error:', e);
+      });
+    }
 
     res.json({ success: true, message: `School registration ${status}`, registration: sanitized });
   } catch (error) {
@@ -942,4 +1170,70 @@ const calculateHaversineDistance = (lat1, lon1, lat2, lon2) => {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   const distance = R * c;
   return Math.round(distance * 10) / 10;
+};
+
+exports.getSchoolRegistrationOrders = async (req, res) => {
+  try {
+    const { schoolId, status, page, limit } = req.query;
+
+    if (!schoolId) {
+      return res.status(400).json({
+        success: false,
+        message: 'schoolId is required'
+      });
+    }
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'status is required (active or completed)'
+      });
+    }
+
+    const filter = {
+      schoolRegistrationId: schoolId,
+      status: status
+    };
+
+    let query = Order.find(filter)
+      .populate('parentId', 'name email mobile')
+      .populate('parentAddressId', 'parentName studentName areaName cityName pincode')
+      .populate('schoolRegistrationId', 'schoolName schoolUniqueId contactName mobile email')
+      .populate('deliveryBoyId', 'name mobile vehicleType')
+      .sort({ createdAt: -1 });
+
+    let orders;
+    let pagination = null;
+
+    if (page && limit) {
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+      const total = await Order.countDocuments(filter);
+
+      orders = await query.skip(skip).limit(parseInt(limit));
+
+      pagination = {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / parseInt(limit)),
+        totalOrders: total,
+        hasNextPage: skip + orders.length < total,
+        hasPrevPage: parseInt(page) > 1
+      };
+    } else {
+      orders = await query;
+    }
+
+    res.json({
+      success: true,
+      orders,
+      ...(pagination && { pagination })
+    });
+
+  } catch (error) {
+    console.error('Get school registration orders error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching school registration orders',
+      error: error.message
+    });
+  }
 }; 
