@@ -1,6 +1,6 @@
 const FestivalWish = require('../models/FestivalWish');
 const FestivalWishDismissal = require('../models/FestivalWishDismissal');
-const { deleteS3Object } = require('../utils/s3Helpers');
+const { deleteStoredMedia } = require('../utils/s3Helpers');
 
 const AUDIENCES = ['all', 'school', 'parent', 'deliveryboy'];
 const APP_ROLES = ['school', 'parent', 'deliveryboy'];
@@ -176,7 +176,7 @@ exports.updateFestivalWish = async (req, res) => {
     }
 
     if (imageFile) {
-      await deleteS3Object(wish.mediaKey);
+      await deleteStoredMedia(wish.mediaKey);
       wish.mediaUrl = imageFile.location;
       wish.mediaKey = imageFile.key;
       wish.mediaType = 'image';
@@ -184,13 +184,13 @@ exports.updateFestivalWish = async (req, res) => {
       wish.thumbnailKey = null;
     }
     if (videoFile) {
-      await deleteS3Object(wish.mediaKey);
+      await deleteStoredMedia(wish.mediaKey);
       wish.mediaUrl = videoFile.location;
       wish.mediaKey = videoFile.key;
       wish.mediaType = 'video';
     }
     if (thumbFile) {
-      if (wish.thumbnailKey) await deleteS3Object(wish.thumbnailKey);
+      if (wish.thumbnailKey) await deleteStoredMedia(wish.thumbnailKey);
       wish.thumbnailUrl = thumbFile.location;
       wish.thumbnailKey = thumbFile.key;
     }
@@ -209,8 +209,8 @@ exports.deleteFestivalWish = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Festival wish not found' });
     }
 
-    await deleteS3Object(wish.mediaKey);
-    if (wish.thumbnailKey) await deleteS3Object(wish.thumbnailKey);
+    await deleteStoredMedia(wish.mediaKey);
+    if (wish.thumbnailKey) await deleteStoredMedia(wish.thumbnailKey);
     await FestivalWishDismissal.deleteMany({ wishId: wish._id });
     await FestivalWish.deleteOne({ _id: wish._id });
 

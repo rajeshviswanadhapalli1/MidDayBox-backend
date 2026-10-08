@@ -1,10 +1,7 @@
-const fs = require("fs");
-const { s3 } = require("../config/aws-s3");
-const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const DeliveryBoy = require('../models/DeliveryBoy');
 const Order = require('../models/Order');
 const User = require('../models/User');
-const cloudinary = require('cloudinary').v2;
+const { deleteImageByUrl } = require('../utils/s3Helpers');
 
 // Update delivery boy status
 exports.updateDeliveryBoyStatus = async (req, res) => {
@@ -151,25 +148,13 @@ exports.updateDeliveryBoyProfile = async (req, res) => {
     let profilePictureUrl = null;
 
     if (req.file) {
-      // multer-s3 provides `req.file.location` as the public URL
       profilePictureUrl = req.file.location;
 
-      // If there's an old profile picture, delete it from S3
       if (deliveryBoy.profilePicture) {
         try {
-          const oldUrl = deliveryBoy.profilePicture;
-          const urlParts = oldUrl.split("/");
-          const key = urlParts.slice(3).join("/"); // skip https://bucket.s3.region.amazonaws.com/
-          const bucket = process.env.AWS_S3_BUCKET;
-
-          await s3.send(
-            new DeleteObjectCommand({
-              Bucket: bucket,
-              Key: key,
-            })
-          );
+          await deleteImageByUrl(deliveryBoy.profilePicture);
         } catch (err) {
-          console.warn("⚠️ Failed to delete old image from S3:", err.message);
+          console.warn('Failed to delete old profile image:', err.message);
         }
       }
     }

@@ -1,5 +1,6 @@
 const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const { s3 } = require('../middleware/uploadDemoS3');
+const { s3 } = require('../config/aws-s3');
+const { deleteCloudinaryImage, publicIdFromUrl } = require('./cloudinaryMedia');
 
 function publicUrlFromKey(key) {
   if (!key) return null;
@@ -34,4 +35,23 @@ async function deleteS3Object(key) {
   }
 }
 
-module.exports = { publicUrlFromKey, keyFromUrl, deleteS3Object };
+async function deleteStoredMedia(key) {
+  if (!key) return;
+  if (String(key).startsWith('middaybox/')) {
+    await deleteCloudinaryImage(key);
+    return;
+  }
+  await deleteS3Object(key);
+}
+
+async function deleteImageByUrl(url) {
+  if (!url) return;
+  const publicId = publicIdFromUrl(url);
+  if (publicId) {
+    await deleteCloudinaryImage(publicId);
+    return;
+  }
+  await deleteS3Object(keyFromUrl(url));
+}
+
+module.exports = { publicUrlFromKey, keyFromUrl, deleteS3Object, deleteStoredMedia, deleteImageByUrl };

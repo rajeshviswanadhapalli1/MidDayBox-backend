@@ -1,5 +1,5 @@
 const DemoVideo = require('../models/DemoVideo');
-const { deleteS3Object } = require('../utils/s3Helpers');
+const { deleteStoredMedia } = require('../utils/s3Helpers');
 
 const AUDIENCES = ['school', 'parent', 'deliveryboy'];
 
@@ -158,12 +158,12 @@ exports.updateDemoVideo = async (req, res) => {
     const thumbFile = req.files?.thumbnail?.[0];
 
     if (videoFile) {
-      await deleteS3Object(video.videoKey);
+      await deleteStoredMedia(video.videoKey);
       video.videoUrl = videoFile.location;
       video.videoKey = videoFile.key;
     }
     if (thumbFile) {
-      await deleteS3Object(video.thumbnailKey);
+      await deleteStoredMedia(video.thumbnailKey);
       video.thumbnailUrl = thumbFile.location;
       video.thumbnailKey = thumbFile.key;
     }
@@ -188,8 +188,8 @@ exports.deleteDemoVideo = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Demo video not found' });
     }
 
-    await deleteS3Object(video.videoKey);
-    await deleteS3Object(video.thumbnailKey);
+    await deleteStoredMedia(video.videoKey);
+    await deleteStoredMedia(video.thumbnailKey);
     await DemoVideo.deleteOne({ _id: video._id });
 
     res.json({ success: true, message: 'Demo video deleted' });
