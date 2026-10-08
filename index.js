@@ -1,10 +1,15 @@
+require('dotenv').config();
+
 const express = require('express');
-const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const { connectDB, isDBConnected } = require('./config/db');
+const { initFirebaseAdmin } = require('./services/fcmService');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -12,9 +17,6 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
-const bodyParser = require('body-parser');
-const cors = require('cors');
-require('dotenv').config();
 console.log("Razorpay Key ID:", process.env.RAZORPAY_KEY_ID);
 console.log("Razorpay Key Secret:", process.env.RAZORPAY_KEY_SECRET ? "Loaded ✅" : "Missing ❌");
 const app = express();
@@ -23,12 +25,6 @@ app.use(bodyParser.json());
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static('uploads'));
-
-// MongoDB connection
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.log(err));
-  
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -59,14 +55,34 @@ app.use('/api/festival-wishes', festivalWishRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'MidDayBox Server is running with Version Code 1.0.7',
+  const dbConnected = isDBConnected();
+  res.status(dbConnected ? 200 : 503).json({
+    success: dbConnected,
+    message: dbConnected
+      ? 'MidDayBox Server is running with Version Code 1.0.7'
+      : 'Server is up but MongoDB is not connected',
+    database: dbConnected ? 'connected' : 'disconnected',
     timestamp: new Date().toISOString()
   });
 });
 
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-}); 
+
+initFirebaseAdmin().then((firebaseApp) => {
+  console.log(
+    firebaseApp
+      ? 'Firebase Admin initialized'
+      : 'Firebase Admin not configured — push notifications are disabled'
+  );
+});
+
+connectDB()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to connect to MongoDB:', err.message);
+    process.exit(1);
+  });

@@ -5,46 +5,80 @@ const path = require('path');
 
 let firebaseInitPromise = null;
 
+function parseServiceAccount(raw) {
+  let value = String(raw).trim();
+  if (value.startsWith("'") && value.endsWith("'")) {
+    value = value.slice(1, -1);
+  }
+  const parsed = JSON.parse(value);
+  if (parsed && typeof parsed.private_key === 'string') {
+    parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+  }
+  return parsed;
+}
+
+function readServiceAccountFile(filePath) {
+  if (!filePath || !String(filePath).trim()) return null;
+  const absPath = path.isAbsolute(filePath)
+    ? filePath
+    : path.resolve(process.cwd(), filePath);
+  if (!fs.existsSync(absPath)) return null;
+  return parseServiceAccount(fs.readFileSync(absPath, 'utf8'));
+}
+
+function loadServiceAccount() {
+  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (rawJson && String(rawJson).trim()) {
+    return parseServiceAccount(rawJson);
+  }
+
+  const rawBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+  if (rawBase64 && String(rawBase64).trim()) {
+    const decoded = Buffer.from(String(rawBase64).trim(), 'base64').toString('utf8');
+    return parseServiceAccount(decoded);
+  }
+
+  const configuredPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+  const fromConfiguredPath = readServiceAccountFile(configuredPath);
+  if (fromConfiguredPath) return fromConfiguredPath;
+
+  if (configuredPath && String(configuredPath).trim()) {
+    console.error(
+      `Firebase service account file not found at ${configuredPath}. ` +
+        'That file is not deployed with the app. On Render, add it as a Secret File ' +
+        'or set FIREBASE_SERVICE_ACCOUNT_JSON.'
+    );
+  }
+
+  // Render mounts Secret Files at /etc/secrets/<filename>.
+  return (
+    readServiceAccountFile('/etc/secrets/ServiceAccountKey.json') ||
+    readServiceAccountFile('/etc/secrets/firebase-service-account.json')
+  );
+}
+
 function initFirebaseAdmin() {
   if (firebaseInitPromise) return firebaseInitPromise;
 
-  firebaseInitPromise = new Promise((resolve, reject) => {
-    try {
-      if (admin.apps && admin.apps.length > 0) {
-        resolve(admin.app());
-        return;
-      }
-
-      // Recommended: set FIREBASE_SERVICE_ACCOUNT_JSON as a JSON string.
-      // Example:
-      // FIREBASE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
-      let serviceAccount = null;
-
-      const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-      const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-
-      if (raw && String(raw).trim()) {
-        serviceAccount = JSON.parse(raw);
-      } else if (serviceAccountPath && String(serviceAccountPath).trim()) {
-        const absPath = path.isAbsolute(serviceAccountPath)
-          ? serviceAccountPath
-          : path.resolve(process.cwd(), serviceAccountPath);
-        const fileRaw = fs.readFileSync(absPath, 'utf8');
-        serviceAccount = JSON.parse(fileRaw);
-      } else {
-        // If not configured, do not throw: we want the app to keep working.
-        resolve(null);
-        return;
-      }
-
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-
-      resolve(admin.app());
-    } catch (e) {
-      reject(e);
+  firebaseInitPromise = Promise.resolve().then(() => {
+    if (admin.apps && admin.apps.length > 0) {
+      return admin.app();
     }
+
+    const serviceAccount = loadServiceAccount();
+    if (!serviceAccount) {
+      return null;
+    }
+
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+
+    return admin.app();
+  }).catch((error) => {
+    firebaseInitPromise = null;
+    console.error('Firebase Admin failed to initialize:', error.message);
+    return null;
   });
 
   return firebaseInitPromise;
@@ -120,5 +154,5 @@ async function sendSchoolApprovedNotification({ schoolRegistrationId, schoolUniq
   };
 }
 
-module.exports = { sendSchoolApprovedNotification };
+module.exports = { initFirebaseAdmin, sendSchoolApprovedNotification };
 
